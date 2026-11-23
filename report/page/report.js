@@ -1173,14 +1173,14 @@ function blocksPage(id) {
     const size = () => FRAME_SIZES.find(([w]) => w === st.w);
     // scaled to fit the column, and never taller than most of the screen (the pictures stay in reach)
     const scaleOf = () => { const [w, h] = size(), room = box.parentElement.clientWidth || w; return Math.min(1, room / w, Math.max(0.2, (innerHeight * 0.72) / h)); };
-    const fit = () => { const [w, h] = size(), k = scaleOf(); fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${k})`; box.style.width = Math.round(w * k) + "px"; box.style.height = Math.round(h * k) + "px"; };
+    const fit = () => { const [w, h] = size(), k = scaleOf(); fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${k})`; box.style.width = Math.round(w * k) + "px"; box.style.height = Math.round(h * k) + "px"; const pc = $(".pc", cap); if (pc) pc.textContent = Math.round(k * 100) + "%"; };
     // the block's own address when it has an id; else, on the same origin, the frame is scrolled to its selector
     const load = () => {
       const u = base() + (b.page || "") + (b.anchor ? "#" + b.anchor : "");
       const [w, h] = size();
       $$("[data-w]", live).forEach((x) => x.setAttribute("aria-pressed", +x.dataset.w === st.w));
       $$("[data-src]", live).forEach((x) => x.setAttribute("aria-pressed", x.dataset.src === st.src));
-      cap.innerHTML = `${w}×${h}, ${st.src === "build" ? "this build" : "the live site (main)"}, drawn at ${Math.round(scaleOf() * 100)}%.${b.anchor ? "" : st.src === "build" ? "" : " This block has no address of its own: scroll the frame to it."}`;
+      cap.innerHTML = `${w}×${h}, ${st.src === "build" ? "this build" : "the live site (main)"}, drawn at <span class="pc"></span>.${b.anchor ? "" : st.src === "build" ? "" : " This block has no address of its own: scroll the frame to it."}`;
       open.href = u; fit(); fr.src = u;
     };
     fr.addEventListener("load", () => { if (b.anchor || !b.selector) return; try { const t = fr.contentDocument && fr.contentDocument.querySelector(b.selector); if (t) t.scrollIntoView(); } catch (e) { /* another origin */ } });
