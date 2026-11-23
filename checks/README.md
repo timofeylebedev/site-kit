@@ -54,7 +54,7 @@ a value (`--out`, `--record` …) given without one stops the command with a cle
 | `paths.dist`, `out`, `scale`, `decisions`, `questions`, `styles`, `scripts`, `pages` | what is served, where the records go, the system's files |
 | `colours` | the palette: `(io) => [{ name, value }]`, or `{ file, read(json) }` |
 | `css.tokens`, `css.media` | the token stylesheets (definitions may hold literal colours; every token must be used) and the page steps (`@custom-media`) |
-| `checks.pages`, `sizes` | the pages (`main: true` for the home page) and the full sizes; default: the home page and a not-found page (`no-such-page`, status 404), and eight screens (320×568, 390×844, 844×390, 768×1024, 1024×768, 1366×650, 1440×900, 1920×1080: `DEFAULT_CHECKS` in lib/config.mjs) |
+| `checks.pages`, `sizes` | the pages (`main: true` for the home page; `measure: true`: measured at the full sizes too, beside the home page, their snapshots joined into one record per size: a site whose system lives on more pages than its home) and the full sizes; default: the home page and a not-found page (`no-such-page`, status 404), and eight screens (320×568, 390×844, 844×390, 768×1024, 1024×768, 1366×650, 1440×900, 1920×1080: `DEFAULT_CHECKS` in lib/config.mjs) |
 | `checks.query`, `unstyle` | added to every address; `[[regex, replacement]]` rewritten in served documents and stylesheets |
 | `checks.skip`, `notIcons`, `typeObjects`, `align`, `cards`, `paragraphs` | the collector's selectors |
 | `checks.sections` | where the collector stops (default `main > section, body > footer`) |

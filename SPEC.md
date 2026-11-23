@@ -64,7 +64,8 @@ export default {
   css: { tokens: ["src/styles/base/tokens.gen.css", ...], media: "src/styles/base/media.css" },
 
   checks: {
-    pages: [{ path: "", title, main: true }, { path, title, status }],   // default: home + "no-such-page" (404)
+    pages: [{ path: "", title, main: true }, { path, title, status, measure }],   // default: home + "no-such-page" (404);
+                                       // measure: true → measured at the full sizes too (the home page always is)
     sizes: [{ w, h, dpr, touch }],     // default: eight screens (DEFAULT_CHECKS in lib/config.mjs)
     query: "?fmbox=0",                 // added to every page the checks load
     unstyle: [[/scrollbar-gutter:\s*stable/g, "scrollbar-gutter:auto"]],   // rewritten in served documents and CSS
@@ -93,8 +94,9 @@ export default {
   },
 
   // the responsive audit (audit/README.md): pages (default: checks.pages without a status), sizes (default: the nine),
-  // what is left out of each check, the sections looked at one by one, a style added before axe, a query for every page
-  audit: { pages: [""], sizes, skip, skipSmall, skipTargets, sections, axeStyle, query },
+  // what is left out of each check, the sections looked at one by one, a style added before axe, a query for every page;
+  // what counts as a text and a target, how a text's box is taken, localStorage put in first, the site's own probe
+  audit: { pages: [""], sizes, skip, skipSmall, skipTargets, sections, axeStyle, query, texts, targets, textBox, unseen, stretched, storage, probe, canvases },
 
   report: {
     title: "Flow Medium · the system",

@@ -52,26 +52,63 @@ export function settings(cfg) {
     axeStyle: a.axeStyle || null,
     query: a.query || "",
     launchArgs: a.launchArgs || ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
+    // what counts as text, and as a target (README.md «The adapter: audit»)
+    texts: a.texts || "h1, h2, h3, p, a, button, dt, dd, span",
+    targets: a.targets || "a[href], button",
+    // the box of a text: the element's whole content (default), or its own text's boxes ("nodes": text under `unseen`
+    // and text ending in an ellipsis left out, a select's own box, a line-clamped box cuts on purpose)
+    textBox: a.textBox || "content",
+    unseen: a.unseen || null,
+    // a link whose ::after is positioned: "grow" counts the grown hit area, "skip" leaves it out (it covers its card)
+    stretched: a.stretched || "grow",
+    // localStorage entries put into the browser before each page (each only when it is not there yet)
+    storage: a.storage || null,
+    // the site's own checks, run in the page after the sections: () => ["what failed", …]
+    probe: a.probe || null,
+    // the canvases whose texts are measured from pixels (null: none)
+    canvases: "canvases" in a ? a.canvases : "canvas",
   };
 }
+
+/** audit.storage into the browser, run in the page before its scripts: each entry only when it is not there yet (a
+ *  string as it is, anything else as JSON) */
+export function seed(st) {
+  for (const [k, v] of Object.entries(st)) if (localStorage.getItem(k) == null) localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v));
+}
+
+/** the exception that keeps a page where axe checks no text's contrast (audit.noContrast, a regex of the page's path) */
+export const noContrastFor = (exceptions, path) => exceptions.find((d) => d.audit?.noContrast && new RegExp(d.audit.noContrast).test(path || "")) || null;
 
 // the built site as GitHub Pages serves it: the kit's one server (lib/serve.mjs), also exported from here
 export { serve };
 
 // ── what is measured in the page ──
-function measure({ skip, skipSmall, skipTargets }) {
+function measure({ skip, skipSmall, skipTargets, texts, targets, textBox, unseen, stretched }) {
   const vw = document.documentElement.clientWidth;
   const name = (e) => e.tagName.toLowerCase() + (typeof e.className === "string" && e.className ? "." + e.className.trim().split(/\s+/)[0] : "");
   const path = (e) => { const p = []; for (let x = e; x && x !== document.body && p.length < 3; x = x.parentElement) p.unshift(name(x)); return p.join(" > "); };
   const shown = (e) => { for (let x = e; x; x = x.parentElement) { const s = getComputedStyle(x); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; } const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const out = { clipped: [], small: [], targets: [] };
-  for (const e of document.querySelectorAll("h1, h2, h3, p, a, button, dt, dd, span")) {
+  // the text's own boxes (textBox "nodes"): text for screen readers only (`unseen`) and text that ends in an ellipsis
+  // (cut on purpose: its range runs past its box) are left out; a select's options are not laid out, so its own box
+  const ellipsed = (x, e) => { for (; x && x !== e.parentElement; x = x.parentElement) { const s = getComputedStyle(x); if (s.textOverflow === "ellipsis" && s.overflowX !== "visible") return true; } return false; };
+  const ownBox = (e) => {
+    if (e.tagName === "SELECT") return e.getBoundingClientRect();
+    const rects = [], tw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+    for (let n; (n = tw.nextNode()); ) { if (!n.textContent.trim() || (unseen && n.parentElement.closest(unseen)) || ellipsed(n.parentElement, e)) continue; const r = document.createRange(); r.selectNodeContents(n); rects.push(r.getBoundingClientRect()); }
+    if (!rects.length) return null;
+    return { left: Math.min(...rects.map((q) => q.left)), right: Math.max(...rects.map((q) => q.right)), top: Math.min(...rects.map((q) => q.top)), bottom: Math.max(...rects.map((q) => q.bottom)) };
+  };
+  for (const e of document.querySelectorAll(texts)) {
     if (e.closest(skip) || !e.textContent.trim() || !shown(e) || e.children.length > 3) continue;
-    const r = document.createRange(); r.selectNodeContents(e); const t = r.getBoundingClientRect();
+    let t;
+    if (textBox === "nodes") { t = ownBox(e); if (!t) continue; }
+    else { const r = document.createRange(); r.selectNodeContents(e); t = r.getBoundingClientRect(); }
     if (t.right > vw + 1 || t.left < -1) out.clipped.push(`${path(e)} past the screen by ${Math.round(Math.max(t.right - vw, -t.left))}px`);
     for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {
       const s = getComputedStyle(a);
       if (!/(hidden|clip)/.test(s.overflowX + s.overflowY)) continue;
+      if (textBox === "nodes" && s.webkitLineClamp && s.webkitLineClamp !== "none") break;   // clamped on purpose (card text)
       const q = a.getBoundingClientRect(), over = Math.max(q.left - t.left, t.right - q.right, q.top - t.top, t.bottom - q.bottom);
       if (over > 1.5) out.clipped.push(`${path(e)} cut by ${name(a)} by ${Math.round(over)}px`);
       break;
@@ -80,7 +117,7 @@ function measure({ skip, skipSmall, skipTargets }) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let n; (n = walker.nextNode()); ) {
     const e = n.parentElement;
-    if (!e || !n.textContent.trim() || e.closest(skipSmall + ", script, style") || !shown(e)) continue;
+    if (!e || !n.textContent.trim() || e.closest(skipSmall + ", script, style") || (unseen && e.closest(unseen)) || !shown(e)) continue;
     // drawn height ÷ laid-out height: below 1 only when the element is scaled down. offsetHeight is whole px, so a box
     // within 1px of its drawn height counts as not scaled (a trimmed 39.6px line box is not "scaled by 0.99")
     const h = e.getBoundingClientRect().height;
@@ -88,10 +125,13 @@ function measure({ skip, skipSmall, skipTargets }) {
     const px = parseFloat(getComputedStyle(e).fontSize) * (k > 0.05 && k < 1.01 ? k : 1);
     if (px < 11.95) out.small.push(`${path(e)} «${n.textContent.trim().slice(0, 24)}» ${px.toFixed(1)}px`);
   }
-  for (const e of document.querySelectorAll("a[href], button")) {
+  for (const e of document.querySelectorAll(targets)) {
     if (!shown(e) || (skipTargets && e.closest(skipTargets))) continue;
-    // a stretched ::after (a whole card that is its link, a hit area grown past the box) counts
-    const r = e.getBoundingClientRect(), a = getComputedStyle(e, "::after"), extra = a.content !== "none" && a.position === "absolute" ? Math.max(0, -parseFloat(a.top) || 0) * 2 : 0;
+    // a stretched ::after (a whole card that is its link, a hit area grown past the box) counts; with stretched "skip"
+    // such a link is left out (it covers its card)
+    const r = e.getBoundingClientRect(), a = getComputedStyle(e, "::after"), grown = a.content !== "none" && a.position === "absolute";
+    if (grown && stretched === "skip") continue;
+    const extra = grown ? Math.max(0, -parseFloat(a.top) || 0) * 2 : 0;
     if (Math.min(r.width, r.height) + extra < 24) out.targets.push(`${path(e)} ${Math.round(r.width)}×${Math.round(r.height)}px`);
   }
   return out;
@@ -165,6 +205,8 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
       for (const s of S.sizes) {
         if (s.font && !chrome && !big) continue;            // WebKit: no way to set the text size
         const ctx = await (s.font && big ? big : browser).newContext({ viewport: { width: s.w, height: s.h }, hasTouch: !!s.touch, isMobile: !!s.touch && engine !== "firefox", bypassCSP: true });
+        // what a visitor has put into this browser before (a bag, favourites): each key only when it is not there yet
+        if (S.storage) await ctx.addInitScript(seed, S.storage);
         const page = await ctx.newPage();
         if (s.font && chrome) { const cdp = await ctx.newCDPSession(page); await cdp.send("Page.enable"); await cdp.send("Page.setFontSizes", { fontSizes: { standard: s.font, fixed: Math.round(s.font * 13 / 16) } }); }
         const errors = [];
@@ -184,13 +226,16 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
           for (let i = 0; i < n; i++) {
             await page.locator(sel).nth(i).evaluate((e) => scrollTo(0, e.getBoundingClientRect().top + scrollY - 64));
             await page.waitForTimeout(900);
-            const m = await page.evaluate(measure, { skip: S.skip, skipSmall: S.skipSmall, skipTargets: S.skipTargets });
+            const m = await page.evaluate(measure, { skip: S.skip, skipSmall: S.skipSmall, skipTargets: S.skipTargets, texts: S.texts, targets: S.targets, textBox: S.textBox, unseen: S.unseen, stretched: S.stretched });
             for (const k of Object.keys(found)) m[k].forEach((x) => found[k].add(x));
           }
         }
+        // the site's own checks (audit.probe), where the sections left the page
+        const own = S.probe ? await page.evaluate(`(${S.probe.toString()})()`) : [];
         const tag = prefix + `${s.w}×${s.h}` + (s.font ? ` (text ${s.font}px)` : "");
         if (overflow > 0) failures.push(`${tag}: the page scrolls sideways by ${overflow}px`);
         for (const [k, label] of [["clipped", "text cut off"], ["small", "text under 12px"], ["targets", "target under 24px"]]) found[k].forEach((x) => failures.push(`${tag}: ${label}: ${x}`));
+        [...new Set(own || [])].forEach((x) => failures.push(`${tag}: ${x}`));
         errors.forEach((e) => failures.push(`${tag}: script error: ${e}`));
         if (s.axe) {
           await page.evaluate(() => scrollTo(0, 0));
@@ -198,7 +243,13 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
           if (S.axeStyle) await page.addStyleTag({ content: S.axeStyle });
           await page.addScriptTag({ content: AXE });
           const res = await page.evaluate(async () => { const r = await axe.run(document, { resultTypes: ["violations"] }); return { v: r.violations.map((x) => ({ id: x.id, nodes: x.nodes.map((n) => n.target.join(" ")) })), contrast: r.passes.some((x) => x.id === "color-contrast") || r.violations.some((x) => x.id === "color-contrast") }; });
-          if (!res.contrast) failures.push(`${tag}: axe could not check the contrast of any text (a layer it cannot see through?)`);
+          if (!res.contrast) {
+            // a page that opens with a modal over it (a dialog stands open from the start) may be kept as designed:
+            // an exception with audit.noContrast, a regex of the page's path
+            const a = noContrastFor(EXCEPTIONS, pg.path);
+            if (a) note(a.id, `${tag}: axe checked the contrast of no text`);
+            else failures.push(`${tag}: axe could not check the contrast of any text (a layer it cannot see through?)`);
+          }
           for (const x of res.v) for (const t of x.nodes) {
             const a = ACCEPTED.find((a) => a.rule === x.id && a.target.test(t));
             if (!a) failures.push(`${tag}: axe ${x.id}: ${t}`);
@@ -207,18 +258,18 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
           // every text drawn over a canvas (the blocks that hold one), found in the page itself
           const n = await page.evaluate((owned) => {
             let i = 0;
-            const blocks = new Set([...document.querySelectorAll("canvas")].map((c) => c.parentElement));
+            const blocks = new Set(owned.canvases ? [...document.querySelectorAll(owned.canvases)].map((c) => c.parentElement) : []);
             for (const box of blocks) {
               const texts = [...box.querySelectorAll("h1, h2, h3, p, a")].filter((e) => e.textContent.trim() && !e.closest("[aria-hidden='true']"));
               for (const e of texts) {
                 if (texts.some((o) => o !== e && e.contains(o))) continue;                     // the innermost text block only
                 const bg = getComputedStyle(e).backgroundColor.match(/[\d.]+/g);
                 if (bg && bg.length === 4 ? +bg[3] > 0.5 : bg && bg.length === 3) continue;     // it has a background of its own (a button)
-                e.dataset.auditPx = i++; e.dataset.auditOwner = owned.find((o) => e.matches(o.sel))?.id || "";
+                e.dataset.auditPx = i++; e.dataset.auditOwner = owned.list.find((o) => e.matches(o.sel))?.id || "";
               }
             }
             return i;
-          }, OWNED);
+          }, { list: OWNED, canvases: S.canvases });
           let measured = 0;
           for (let i = 0; i < n; i++) for (const r of await canvasContrast(page, `[data-audit-px="${i}"]`, sharp)) {
             measured++;
@@ -226,7 +277,7 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
             const line = `${tag}: «${r.text}» ${r.median.toFixed(2)} : 1 over the canvas (needs ${r.need})`;
             if (r.owner) note(r.owner, line); else failures.push(`text over a canvas: ${line}`);
           }
-          log(`${tag}: text over canvases: ${measured} of ${n} measured (the others are outside the screen or a clipping window)`);
+          if (S.canvases) log(`${tag}: text over canvases: ${measured} of ${n} measured (the others are outside the screen or a clipping window)`);
         }
         log(`${tag}: ${overflow ? "sideways scroll" : "ok"}; ${found.clipped.size} cut, ${found.small.size} small, ${found.targets.size} targets`);
         await ctx.close();
