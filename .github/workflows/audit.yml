@@ -63,7 +63,28 @@ jobs:
           node-version: ${{ inputs.node-version }}
           cache: npm
       - run: ${{ inputs.install }}
-      - run: npx --no-install playwright install --with-deps ${{ matrix.engine }}
+      - name: Which browser
+        id: pw
+        env:
+          ENGINE: ${{ matrix.engine }}
+        run: |
+          echo "key=browsers-$(lsb_release -rs)-$(node -p "require('playwright/package.json').version")-$ENGINE" >> "$GITHUB_OUTPUT"
+          # apt keeps the system libraries it downloads where the cache below saves them (see checks.yml)
+          mkdir -p "$HOME/.cache/apt-archives/partial"
+          printf 'Dir::Cache::Archives "%s/";\nAPT::Keep-Downloaded-Packages "true";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\n' "$HOME/.cache/apt-archives" | sudo tee /etc/apt/apt.conf.d/99site-kit-cache > /dev/null
+      - name: Browser from the cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/apt-archives/*.deb
+          key: ${{ steps.pw.outputs.key }}
+      - name: Browser
+        env:
+          ENGINE: ${{ matrix.engine }}
+        run: |
+          npx --no-install playwright install --with-deps "$ENGINE"
+          sudo chmod -R a+rX "$HOME/.cache/apt-archives"
       - if: inputs.before-build != ''
         run: ${{ inputs.before-build }}
       - run: ${{ inputs.build }}

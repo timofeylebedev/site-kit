@@ -14,7 +14,8 @@ come in and every pinned part has moved), then looks at every section on screen.
 - **text cut off**: a line of text outside a block that clips it, or outside the screen;
 - **text under 12px** as it is drawn (scaling included);
 - **a link or button under 24×24px** to tap (WCAG 2.2, 2.5.8; a stretched `::after` counts);
-- **axe-core** rules, at the sizes marked `axe`;
+- **axe-core** rules, at the sizes marked `axe`, once every running transition and finite animation has ended (at
+  most 2 s; `settle()`): a bar that takes the colours of the section under it is judged as it settles, not half-way;
 - **text over a canvas** (dots, shaders: axe cannot see it): its contrast from the pixels behind it, the text hidden
   for a moment, the median of every pixel, at the axe sizes;
 - **a script error** on the page;
