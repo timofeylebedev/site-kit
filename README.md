@@ -41,6 +41,11 @@ both together. A change made for one site never reaches another by surprise. A c
 here; the site that needs it raises its tag in its own pull request, after checking that its findings did not move
 for a reason other than the change.
 
+Unreleased (for v0.1.1, QQ Coffee's move onto the kit): the audit takes what counts as a text and a target, the box
+of a text, a link stretched over its card, localStorage put in before each page and a probe of the site's own from
+the adapter (audit/README.md); the checks measure the pages marked `measure: true` at the full sizes too, beside the
+home page (checks/README.md). Flow Medium's results do not move.
+
 ## Developing the kit
 
 `npm test` runs the tests that need no browser (`SITE_KIT_BROWSER=1 npm test` adds the browser ones). To try a change
