@@ -1,0 +1,4 @@
+{ "range": { "from": 320, "to": 1440, "height": { "from": 568, "to": 900 } },
+  "ladder": { "steps": [[2, 24], [4, 64]] },
+  "type": { "roles": { "type/body": { "px": [16, 18] }, "type/small": { "px": [14, 14] } }, "relations": { "min": 1.125, "pairs": [["type/body", "type/small"]] } },
+  "space": { "roles": { "radius/m": { "px": [12, 16] }, "gap": { "px": [10, 20] } } } }

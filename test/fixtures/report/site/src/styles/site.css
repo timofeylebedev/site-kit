@@ -1,0 +1,2 @@
+.hero { padding: 16px; box-shadow: 0 2px 4px #0003; transition: opacity 0.3s ease; }
+@container (width > 43rem) { .hero { padding: 24px; } }

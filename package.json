@@ -1,0 +1,70 @@
+{
+  "name": "site-kit",
+  "version": "0.1.0",
+  "description": "Tim's shared kit for static sites: the design system's checks and review page, the typesetter, pictures, browser helpers and the lessons learned, as code",
+  "type": "module",
+  "bin": {
+    "site-kit": "bin/site-kit.mjs"
+  },
+  "exports": {
+    "./config": "./lib/config.mjs",
+    "./typeset": "./typeset/index.js",
+    "./typeset/vite": "./typeset/vite.js",
+    "./runtime/*": "./runtime/*",
+    "./package.json": "./package.json",
+    "./typeset/core.js": "./typeset/core.js",
+    "./typeset/lint.js": "./typeset/lint.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "checks",
+    "report",
+    "shots",
+    "typeset",
+    "images",
+    "audit",
+    "rules",
+    "runtime",
+    "README.md",
+    "AGENTS.md",
+    "SPEC.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "axe-core": "^4.10.0",
+    "playwright": "^1.56.0",
+    "sharp": "^0.34.0 || ^0.35.0",
+    "rolldown": "*",
+    "parse5": "^7.0.0 || ^8.0.0",
+    "entities": "*",
+    "svgo": "^3.0.0 || ^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "axe-core": {
+      "optional": true
+    },
+    "sharp": {
+      "optional": true
+    },
+    "rolldown": {
+      "optional": true
+    },
+    "parse5": {
+      "optional": true
+    },
+    "entities": {
+      "optional": true
+    },
+    "svgo": {
+      "optional": true
+    }
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,26 @@
+# The kit's own tests on every push and pull request (npm test: no browser). The peer dependencies a site would
+# bring are installed here without saving, at the versions Flow Medium uses.
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock parse5@^8 entities sharp@^0.35 svgo@^4 axe-core@^4.14 playwright@^1.56 rolldown
+      - run: npm test

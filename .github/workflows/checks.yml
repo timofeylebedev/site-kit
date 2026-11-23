@@ -1,0 +1,278 @@
+# The design system's checks (layer 2) and the pictures of the blocks (layer 3), after the site is out, so they never
+# hold it up: a failure here never touches the site.
+# - Measured: on main always; on a pull request only when `site-kit changed` says a design file changed
+#   (cfg.checks.designPaths) or the pull request has the label `checks` (adding the label starts a run). A run that
+#   skips the measuring still says so in its summary: the preview's review page then shows main's measurements.
+# - Kept on the data branch (the adapter's checks.dataBranch, default report-data; `site-kit checks keep`):
+#   main → latest/ and history/; a pull request → pr/<n>/
+#   (compared with main's latest/); a closed pull request's pr/<n>/ is removed (job `forget`). A broken run of main is
+#   kept apart and never becomes the baseline.
+# - Pictures (`site-kit shots --changed`, only the blocks whose files changed since their last pictures): on main
+#   after the checks, kept on report-data; on a pull request with the label `shots`, into the preview's review page
+#   only (not kept). The manual run's input `shots: all` takes every block again.
+# - The review page is published again with all that: /<report-path>/ (main) or the preview.
+# A newer push cancels the older run of the same pull request (the caller's concurrency lane, and this job's own).
+# Not on ubuntu-latest: since Oct 22, 2026 that is Ubuntu 26.04, where Playwright (1.56) cannot install its browsers
+# ("Playwright does not support chromium on ubuntu26.04-x64"); move on once it can.
+# The calling job must grant: contents: write (report-data, the Pages branch), pull-requests: write (the preview).
+name: checks
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+      install:
+        type: string
+        default: npm ci
+      before-build:
+        description: anything the site needs before its build (a shell command; empty = nothing)
+        type: string
+        default: ""
+      build:
+        type: string
+        default: npm run build
+      dist:
+        type: string
+        default: dist
+      engines:
+        description: 'the engines measured, in order; `:quick` = the full sizes and the pages only. The first one must succeed, the others only warn'
+        type: string
+        default: "chromium webkit:quick"
+      checks-label:
+        description: the label that makes a pull request measured even when no design file changed
+        type: string
+        default: checks
+      shots-label:
+        description: the label that takes the pictures of a pull request's changed blocks (into its preview only)
+        type: string
+        default: shots
+      shots:
+        description: "the manual run's choice: '' (as the event says), changed, all, none"
+        type: string
+        default: ""
+      pages-branch:
+        type: string
+        default: gh-pages
+      main-branch:
+        type: string
+        default: main
+      previews:
+        type: string
+        default: pr-preview
+      report:
+        description: publish the review page again with the measurements
+        type: boolean
+        default: true
+      report-path:
+        type: string
+        default: report
+      runs-on:
+        type: string
+        default: ubuntu-24.04
+      timeout:
+        description: minutes
+        type: number
+        default: 40
+
+jobs:
+  checks:
+    if: github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout }}
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: site-kit-checks-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+      cancel-in-progress: true
+    env:
+      SITE_KIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SITE_KIT_PR: ${{ github.event.pull_request.number }}
+      SITE_KIT_MAIN: ${{ inputs.main-branch }}
+      SITE_KIT_REPORT_PATH: ${{ inputs.report-path }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: ${{ inputs.install }}
+
+      # where the adapter keeps things (cfg.paths): the checks' records; and the data branch (checks.dataBranch)
+      - name: The site's paths
+        id: paths
+        run: |
+          node --input-type=module -e '
+            import { loadConfig } from "site-kit/config";
+            const c = await loadConfig();
+            console.log("out=" + c.paths.out);
+            console.log("data=" + c.checks.dataBranch);
+          ' >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      # what this run does: measure (main always; a pull request when a design file changed or it has the label) and
+      # take pictures (main: the changed blocks; a pull request: only with its label; a manual run: as asked)
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          ON_MAIN: ${{ github.ref == format('refs/heads/{0}', inputs.main-branch) }}
+          CHECKS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, inputs.checks-label) }}
+          SHOTS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, inputs.shots-label) }}
+          SHOTS_INPUT: ${{ inputs.shots }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then measure=true; why="not a pull request ($EVENT)"
+          elif [ "$CHECKS_LABEL" = true ]; then measure=true; why="the pull request has the label ${{ inputs.checks-label }}"
+          else
+            set +e; npx --no-install site-kit changed; code=$?; set -e
+            if [ $code = 1 ]; then measure=false; why="no design files changed"
+            else measure=true; why="design files changed"; fi
+          fi
+          shots=""
+          case "$SHOTS_INPUT" in
+            all|changed) shots="$SHOTS_INPUT" ;;
+            none) ;;
+            *) if [ "$EVENT" = pull_request ]; then
+                 if [ "$SHOTS_LABEL" = true ]; then shots=changed; fi
+               elif [ "$ON_MAIN" = true ]; then shots=changed; fi ;;
+          esac
+          echo "measure: $measure ($why); shots: ${shots:-none}"
+          { echo "measure=$measure"; echo "why=$why"; echo "shots=$shots"; } >> "$GITHUB_OUTPUT"
+
+      - name: Browsers
+        if: steps.decide.outputs.measure == 'true' || steps.decide.outputs.shots != ''
+        env:
+          ENGINES: ${{ inputs.engines }}
+          SHOTS: ${{ steps.decide.outputs.shots }}
+        run: |
+          list=""
+          if [ "${{ steps.decide.outputs.measure }}" = true ]; then for e in $ENGINES; do list="$list ${e%%:*}"; done; fi
+          if [ -n "$SHOTS" ]; then list="$list chromium"; fi
+          # shellcheck disable=SC2046,SC2086  # the list is split on purpose
+          npx --no-install playwright install --with-deps $(echo $list | tr ' ' '\n' | sort -u | tr '\n' ' ')
+      - if: (steps.decide.outputs.measure == 'true' || steps.decide.outputs.shots != '') && inputs.before-build != ''
+        run: ${{ inputs.before-build }}
+      - name: Build
+        id: build
+        if: steps.decide.outputs.measure == 'true' || steps.decide.outputs.shots != ''
+        run: ${{ inputs.build }}
+
+      - name: Measure
+        if: steps.decide.outputs.measure == 'true'
+        env:
+          ENGINES: ${{ inputs.engines }}
+        run: |
+          first=1
+          # shellcheck disable=SC2086  # the engines and --quick are split on purpose
+          for e in $ENGINES; do
+            engine="${e%%:*}"; quick=""; [ "$e" != "$engine" ] && quick="--${e#*:}"
+            if [ $first = 1 ]; then npx --no-install site-kit checks measure --engine "$engine" $quick
+            else npx --no-install site-kit checks measure --engine "$engine" $quick || echo "::warning title=Checks::$engine could not be measured"; fi
+            first=0
+          done
+
+      - name: The state (compared with the last deploy of main)
+        if: steps.decide.outputs.measure == 'true'
+        env:
+          OUT: ${{ steps.paths.outputs.out }}
+          DATA: ${{ steps.paths.outputs.data }}
+        run: |
+          mkdir -p "$OUT/prev"
+          if git fetch --depth=1 origin "+refs/heads/$DATA:refs/remotes/origin/$DATA"; then
+            git show "origin/$DATA:latest/state.json" > "$OUT/prev/state.json" || rm -f "$OUT/prev/state.json"
+            git show "origin/$DATA:latest/record-chromium.json" > "$OUT/prev/record.json" || rm -f "$OUT/prev/record.json"
+          fi
+          more=""
+          for f in "$OUT"/record-*.json; do
+            [ -e "$f" ] || continue
+            e=$(basename "$f" .json); e=${e#record-}
+            [ "$e" != chromium ] && more="$more --$e $f"
+          done
+          # shellcheck disable=SC2086  # --<engine> <record> pairs, split on purpose
+          npx --no-install site-kit checks state $more --prev "$OUT/prev/state.json" --prev-record "$OUT/prev/record.json"
+
+      # layer 3: pictures of the blocks whose files changed since their last pictures (or all, when asked)
+      - name: Pictures of the blocks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.decide.outputs.shots != '' }}
+        run: npx --no-install site-kit shots --${{ steps.decide.outputs.shots }} || echo "::warning title=Shots::the pictures could not be taken"
+
+      - name: Keep the record (the data branch)
+        if: steps.decide.outputs.measure == 'true'
+        run: npx --no-install site-kit checks keep ${{ github.event_name == 'pull_request' && format('--pr {0}', github.event.pull_request.number) || '' }}
+
+      - name: The review page with the checks
+        id: report
+        if: inputs.report && (steps.decide.outputs.measure == 'true' || steps.decide.outputs.shots != '')
+        env:
+          DIST: ${{ inputs.dist }}
+          REPORT: ${{ inputs.report-path }}
+        run: |
+          rm -rf "${DIST:?}/${REPORT:?}"
+          npx --no-install site-kit report --out "$DIST/$REPORT"
+          find "$DIST" \( -name '*.br' -o -name '*.gz' \) -delete
+          touch "$DIST/.nojekyll"
+
+      - name: Publish the review page (main)
+        if: steps.report.outcome == 'success' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', inputs.main-branch)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: ${{ inputs.dist }}/${{ inputs.report-path }}
+          target-folder: ${{ inputs.report-path }}
+          branch: ${{ inputs.pages-branch }}
+          force: false
+
+      # the whole preview again (the action replaces its folder), with the comment left as the site's job wrote it
+      - name: Publish the review page (the preview)
+        if: steps.report.outcome == 'success' && github.event_name == 'pull_request'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: ${{ inputs.dist }}
+          preview-branch: ${{ inputs.pages-branch }}
+          umbrella-dir: ${{ inputs.previews }}
+          action: deploy
+          comment: false
+
+      - name: Summary
+        if: always()
+        env:
+          OUT: ${{ steps.paths.outputs.out }}
+          MEASURE: ${{ steps.decide.outputs.measure }}
+          WHY: ${{ steps.decide.outputs.why }}
+          SHOTS: ${{ steps.decide.outputs.shots }}
+        run: |
+          # shellcheck disable=SC2016  # the node one-liners are JavaScript, in single quotes on purpose
+          {
+            echo "### Design-system checks"; echo
+            if [ "$MEASURE" = false ]; then
+              echo "Not measured: $WHY. The preview's review page shows main's measurements. To measure anyway, add the label \`${{ inputs.checks-label }}\`."
+            else
+              echo '```'
+              node -e 'const s=require(process.argv[1]);const m=s.summary;console.log(`${m.rules} rules: ${m.pass} pass, ${m.warn} warn, ${m.fail} fail; ${m.findings} findings (${m.new} new, ${m.fixed} fixed); ${m.questions} questions open`);for(const n of (s.needs||[]).slice(0,15))console.log(`${n.severity.padEnd(4)} ${n.title.slice(0,100)} — ${n.why}`)' "$GITHUB_WORKSPACE/$OUT/state.json" 2>/dev/null || echo "(no state: an earlier step failed)"
+              echo '```'
+            fi
+            if [ -n "$SHOTS" ]; then
+              echo; echo "Pictures ($SHOTS):"
+              node -e 'const i=require(process.argv[1]);const b=Object.keys(i.blocks||{});const u=Object.keys(i.upToDate||{});console.log(b.length?`taken: ${b.join(", ")}`:"none taken");if(u.length)console.log(`up to date: ${u.join(", ")}`)' "$GITHUB_WORKSPACE/$OUT/shots/index.json" 2>/dev/null || echo "(none: the step failed or did not run)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # a closed pull request: its last run is taken off the report-data branch
+  forget:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: write
+    env:
+      SITE_KIT_MAIN: ${{ inputs.main-branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.main-branch }}   # the keeper as main has it (a closed pull request's own branch may be gone)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: ${{ inputs.install }}
+      - run: npx --no-install site-kit checks keep --forget ${{ github.event.pull_request.number }}

@@ -1,0 +1,28 @@
+{
+  "schema": 1, "site": "Fixture", "engine": "chromium", "version": "1", "quick": false, "when": "2026-11-23T00:00:00.000Z",
+  "commit": "abc1234def", "ref": "main", "pr": null, "timings": { "sizes": 1, "pages": 1 },
+  "at": {
+    "390x844": {
+      "vw": 390, "vh": 844, "dpr": 3, "n": 40, "errors": [], "overflow": 0,
+      "text": [
+        { "px": 16, "family": "Inter", "weight": 400, "lh": 1.4, "object": false, "n": 90, "where": ["p.lead"] },
+        { "px": 15, "family": "Inter", "weight": 400, "lh": 1.4, "object": false, "n": 10, "where": ["p.note"] },
+        { "px": 40, "family": "Inter", "weight": 700, "lh": 1, "object": true, "n": 1, "where": ["h1.title"] }
+      ],
+      "colours": [
+        { "rgba": [0, 0, 0, 1], "n": 95, "where": ["p.lead"], "props": { "text": 95 } },
+        { "rgba": [18, 52, 86, 1], "n": 5, "where": ["div.odd"], "props": { "background": 5 } }
+      ],
+      "fills": [{ "kind": "solid", "n": 3, "where": ["div.card"] }],
+      "radii": [{ "sel": "div.card", "px": 12, "pill": false, "w": 300, "h": 200, "n": 4, "where": ["div.card"] }],
+      "borders": [{ "px": 1, "n": 2, "where": ["div.card"] }],
+      "shadows": [], "effects": [], "layers": [], "z": [], "contexts": 3,
+      "icons": [], "ratios": [],
+      "images": [{ "sel": "img.photo", "src": "photo-abcdefgh.jpg", "format": "jpg", "w": 300, "h": 200, "file": [900, 600], "k": 1, "alt": null, "art": false, "loading": "eager", "priority": "auto", "first": true, "shown": true }],
+      "edges": { "lines": { "left": [], "right": [] }, "near": [], "n": 0 },
+      "typo": [], "components": [], "interact": [{ "ms": 200, "n": 6, "where": ["a.link"] }]
+    }
+  },
+  "pages": [{ "path": "", "title": "Home", "size": "1440x900", "status": 200, "want": 200, "overflow": 0, "errors": [] }],
+  "links": [], "files": []
+}
