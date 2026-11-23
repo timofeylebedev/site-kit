@@ -3,7 +3,7 @@
 // A picture whose output is newer than its original is skipped (--force makes everything again); after replacing an
 // original, run it and commit the new files.
 import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
-import { join, parse, dirname } from "node:path";
+import { join, parse, dirname, resolve, relative } from "node:path";
 import { createRequire } from "node:module";
 
 // sharp and svgo are the site's own packages (peer dependencies), resolved from its root
@@ -35,7 +35,7 @@ export async function make(cfg, { force = false, dry = false, only = null, log =
   const im = cfg.images, root = cfg.root;
   if (!im) { log("images: no `images` in site-kit.config.mjs"); return { made: 0, skipped: 0, would: [] }; }
   const sharp = peer(root, "sharp");
-  const SRC = join(root, im.from), OUT = join(root, im.to);
+  const SRC = resolve(root, im.from), OUT = resolve(root, im.to);
   const quality = { ...QUALITY, ...(im.quality || {}) };
   const pick = (name) => !only || name.includes(only);
 
@@ -48,7 +48,7 @@ export async function make(cfg, { force = false, dry = false, only = null, log =
   // each output: skipped when up to date; with dry, only listed
   const step = async (out, src, build) => {
     if (await newer(out, src)) { skipped++; return; }
-    if (dry) { would.push(out.slice(root.length + 1)); return; }
+    if (dry) { would.push(relative(root, out)); return; }
     const data = await build();
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, data);
@@ -86,7 +86,7 @@ export async function make(cfg, { force = false, dry = false, only = null, log =
     const src = join(SRC, im.icons.src), bg = im.icons.background || "#ffffff";
     const opaque = () => sharp(src).flatten({ background: bg });
     for (const job of im.icons.out) {
-      await step(join(root, job.out), src, async () => {
+      await step(resolve(root, job.out), src, async () => {
         const pic = sharp(await opaque().resize({ width: job.width, kernel: "lanczos3" }).png().toBuffer()).removeAlpha();
         return exactPng(pic, job.out);
       });
@@ -95,7 +95,7 @@ export async function make(cfg, { force = false, dry = false, only = null, log =
 
   if (im.og && pick(im.og.src)) {
     const { src: name, out, width: W, height: H, background = "#ffffff" } = im.og, src = join(SRC, name);
-    await step(join(root, out), src, async () => {
+    await step(resolve(root, out), src, async () => {
       const { width, height } = await sharp(src).metadata();
       if (width !== W || height !== H) throw new Error(`images: ${name} is ${width} × ${height}, not ${W} × ${H}`);
       return exactPng(sharp(src).flatten({ background }).removeAlpha(), out);
@@ -104,7 +104,7 @@ export async function make(cfg, { force = false, dry = false, only = null, log =
 
   if (im.ico && pick(im.ico.src)) {
     const { src: name, out, sizes = [16, 32], circle: round = false, background = "#ffffff" } = im.ico, src = join(SRC, name);
-    await step(join(root, out), src, async () => {
+    await step(resolve(root, out), src, async () => {
       const entries = [];
       for (const size of sizes) {
         const square = await sharp(src).flatten({ background }).resize({ width: size, kernel: "lanczos3" }).removeAlpha().toBuffer();
@@ -119,7 +119,7 @@ export async function make(cfg, { force = false, dry = false, only = null, log =
     // favicon.svg: the mark, square viewBox (centred), one colour, another when the browser is dark
     const { optimize } = peer(root, "svgo");
     const { src: name, out, light = "#000", dark = "#fff" } = im.favicon, src = join(SRC, name);
-    await step(join(root, out), src, async () => {
+    await step(resolve(root, out), src, async () => {
       const svg = await readFile(src, "utf8");
       const [, , w, h] = svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
       const side = Math.max(w, h);

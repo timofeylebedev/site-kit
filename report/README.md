@@ -96,7 +96,7 @@ No module scripts and no fetch on the page, so it opens from `file://`. Served u
   - `typesetSamples: [{ lang, text }]`: the typesetter demo's texts; `typesetDecision`: the decision shown under it
     (default `typeset`).
 
-Environment: `SITE_KIT_HEAD_SHA` (the commit being built, when the checkout is a merge commit: a pull request),
+Environment: `SITE_KIT_SHA` (the commit being built, when the checkout is a merge commit: a pull request; the workflows set it),
 `GITHUB_HEAD_REF` / `GITHUB_REF_NAME` (the branch).
 
 ## Lessons it carries

@@ -16,9 +16,12 @@ export function fingerprints(io, files) {
 }
 
 /** what differs between a block's kept entry and now: [] = up to date. `sizes` = the sizes asked for ("390x844") */
-export function whatChanged(entry, now, sizes = []) {
+export function whatChanged(entry, now, sizes = [], block = null) {
   if (!entry) return ["no picture yet"];
   const why = [];
+  // how the block is pictured changed in the adapter (another element, other frames)
+  if (block && entry.selector && block.selector !== entry.selector) why.push("its selector changed");
+  if (block && JSON.stringify(block.frames || null) !== JSON.stringify(entry.frames || null)) why.push("its frames changed");
   const was = entry.files || {};
   for (const [f, sha] of Object.entries(now)) {
     if (!(f in was)) why.push(`${f} is new to the block`);

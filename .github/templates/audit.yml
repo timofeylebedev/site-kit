@@ -1,0 +1,25 @@
+# Copy to the site's .github/workflows/audit.yml. Checks every pull request in real browsers (`site-kit audit`):
+# Chromium fails its check on a problem; Firefox and WebKit run too, but only warn until they have come back clean a
+# few times (then add them to `fail-on`). Decided exceptions live in the site's adapter / decisions, each with its reason.
+# To make a failing check stop a merge: Settings → Rules → Rulesets → New branch ruleset for main → Require status
+# checks to pass → add "audit / audit (chromium)". Without that the check informs, but does not block.
+name: Responsive audit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one run per pull request (its ref is refs/pull/<n>/merge): a newer push cancels the older audit
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    uses: timofeylebedev/site-kit/.github/workflows/audit.yml@v0.1.0
+    # with:
+    #   engines: '["chromium", "firefox", "webkit"]'
+    #   fail-on: '["chromium"]'

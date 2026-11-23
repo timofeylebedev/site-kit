@@ -1,0 +1,81 @@
+# The built pages in real browsers (`site-kit audit`): at the sizes that matter (phones, tablets, a phone turned
+# sideways, laptops, a large screen, and a phone and a laptop with bigger browser text) it fails on sideways scroll,
+# cut-off text, text under 12px, tap targets under 24px, script errors and accessibility (axe-core) rules.
+# Three engines: Chromium (Chrome, Edge, Yandex Browser, Android) fails its check when a problem is found. Firefox and
+# WebKit (Safari, every browser on iPhone) run too, but only warn (their check stays green, the problems are in its
+# summary) until the site moves them into `fail-on` once they have come back clean a few times.
+# To make a failing check stop a merge: Settings → Rules → Rulesets → New branch ruleset for main → Require status
+# checks to pass → add "<the calling job> / audit (chromium)". Without that the check informs, but does not block.
+# Not on ubuntu-latest: since Oct 22, 2026 that is Ubuntu 26.04, where Playwright (1.56) cannot install its browsers
+# ("Playwright does not support chromium on ubuntu26.04-x64"); move on once it can.
+name: audit
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+      install:
+        type: string
+        default: npm ci
+      before-build:
+        type: string
+        default: ""
+      build:
+        type: string
+        default: npm run build
+      audit:
+        description: the audit command; `--engine <engine>` is added to it
+        type: string
+        default: npx --no-install site-kit audit
+      engines:
+        description: the engines, as a JSON list
+        type: string
+        default: '["chromium", "firefox", "webkit"]'
+      fail-on:
+        description: the engines whose problems fail the check, as a JSON list (the others warn)
+        type: string
+        default: '["chromium"]'
+      runs-on:
+        type: string
+        default: ubuntu-24.04
+      timeout:
+        description: minutes
+        type: number
+        default: 20
+
+jobs:
+  audit:
+    name: audit (${{ matrix.engine }})
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: ${{ fromJSON(inputs.engines) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - run: ${{ inputs.install }}
+      - run: npx --no-install playwright install --with-deps ${{ matrix.engine }}
+      - if: inputs.before-build != ''
+        run: ${{ inputs.before-build }}
+      - run: ${{ inputs.build }}
+      - name: Audit
+        continue-on-error: ${{ !contains(fromJSON(inputs.fail-on), matrix.engine) }}
+        env:
+          SITE_KIT_ENGINE: ${{ matrix.engine }}
+          FAILS: ${{ contains(fromJSON(inputs.fail-on), matrix.engine) }}
+        run: |
+          set -o pipefail
+          ${{ inputs.audit }} --engine "$SITE_KIT_ENGINE" 2>&1 | tee audit.log || { [ "$FAILS" = true ] || echo "::warning title=Audit (${SITE_KIT_ENGINE})::problems found, see the summary"; exit 1; }
+      - name: Summary
+        if: always()
+        run: |
+          { echo "### Responsive audit · ${{ matrix.engine }}"; echo; echo '```'; tail -n 60 audit.log 2>/dev/null || echo "(no audit log: an earlier step failed)"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

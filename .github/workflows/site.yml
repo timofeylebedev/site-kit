@@ -1,0 +1,136 @@
+# The site: build, check, the review page from the code (layer 1), and publish on GitHub Pages from one branch.
+# - A push to main publishes the site at the root of the Pages branch; the open previews in pr-preview/ are kept.
+# - Every pull request is published as a preview in pr-preview/pr-<number>/. The link is posted as a comment on the
+#   pull request, updated on every push, and the preview is removed when the pull request is merged or closed
+#   (rossjrw/pr-preview-action). Pull requests from forks build but are not published (their token cannot push).
+# - The review page (`site-kit report`, from the code only: tokens, roles, steps, decisions, questions, the code's
+#   rules; measurements read from the report-data branch) goes to <report-path>/ beside the site. It never stops the
+#   site: if it cannot be built, the copy published last is put back.
+# Called from the site's own workflow (.github/templates/deploy.yml in the kit), which sets the concurrency group:
+# one lane per pull request number and one per branch, never github.ref alone (a merged pull request's «closed» run
+# has main's ref and cancelled main's deploy that way: Flow Medium PR #59).
+# The calling job must grant: contents: write (push to the Pages branch), pull-requests: write (the preview comment).
+name: site
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version
+        type: string
+        default: "22"
+      install:
+        description: how to install the site's dependencies (site-kit comes with them, as a git dependency)
+        type: string
+        default: npm ci
+      before-build:
+        description: anything the site needs before its build (a shell command; empty = nothing)
+        type: string
+        default: ""
+      build:
+        description: the build command
+        type: string
+        default: npm run build
+      check:
+        description: the check of the built pages (html-validate and the like; empty = none)
+        type: string
+        default: npm run check
+      dist:
+        description: the built site's folder
+        type: string
+        default: dist
+      pages-branch:
+        description: the branch GitHub Pages serves
+        type: string
+        default: gh-pages
+      main-branch:
+        description: the branch that is the live site
+        type: string
+        default: main
+      previews:
+        description: the folder of the pull requests' previews on the Pages branch
+        type: string
+        default: pr-preview
+      report:
+        description: build the review page of the design system (site-kit report) into <dist>/<report-path>
+        type: boolean
+        default: true
+      report-path:
+        description: where the review page is published (relative to the site's root)
+        type: string
+        default: report
+      runs-on:
+        description: the runner (no browser is needed here)
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  site:
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      SITE_KIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SITE_KIT_PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: github.event.action != 'closed'
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - if: github.event.action != 'closed'
+        run: ${{ inputs.install }}
+      - if: github.event.action != 'closed' && inputs.before-build != ''
+        run: ${{ inputs.before-build }}
+      - if: github.event.action != 'closed'
+        run: ${{ inputs.build }}
+      - if: github.event.action != 'closed' && inputs.check != ''
+        run: ${{ inputs.check }}
+
+      # the review page from the code (layer 1, seconds, no browser); never stops the site's deploy
+      - name: Build the review page
+        if: github.event.action != 'closed' && inputs.report
+        env:
+          DIST: ${{ inputs.dist }}
+          REPORT: ${{ inputs.report-path }}
+          PAGES: ${{ inputs.pages-branch }}
+        run: |
+          if ! npx --no-install site-kit report --out "$DIST/$REPORT"; then
+            echo "::warning title=Review page::its data could not be rebuilt; the copy published last is kept"
+            rm -rf "${DIST:?}/${REPORT:?}"
+            if git fetch --quiet --depth=1 origin "+refs/heads/$PAGES:refs/remotes/origin/$PAGES"; then
+              git archive "origin/$PAGES" "$REPORT" 2>/dev/null | tar -x -C "$DIST" || echo "no review page on $PAGES yet"
+            fi
+          fi
+
+      # GitHub Pages compresses by itself, so the .br/.gz copies are left out;
+      # .nojekyll tells Pages to serve the files as they are.
+      - name: Prepare for GitHub Pages
+        if: github.event.action != 'closed'
+        run: |
+          find "${{ inputs.dist }}" \( -name '*.br' -o -name '*.gz' \) -delete
+          touch "${{ inputs.dist }}/.nojekyll"
+
+      # main → the root of the site; the open previews are kept
+      - name: Publish the site
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', inputs.main-branch)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: ${{ inputs.dist }}
+          branch: ${{ inputs.pages-branch }}
+          clean-exclude: ${{ inputs.previews }}/
+          force: false
+
+      # pull request → its preview, with the link as a comment (and its removal when the pull request is closed)
+      - name: Publish the preview
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: ${{ inputs.dist }}
+          preview-branch: ${{ inputs.pages-branch }}
+          umbrella-dir: ${{ inputs.previews }}
+          # not `auto`: that knows only opened/reopened/synchronize/closed, and a run started by a label must deploy too
+          action: ${{ github.event.action == 'closed' && 'remove' || 'deploy' }}

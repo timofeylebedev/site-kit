@@ -1053,7 +1053,7 @@ function checksBlock(panel, tab) {
   const rs = rulesOf(tab); if (!rs.length) return;
   const blk = el("div", "block checks");
   const n = (s) => rs.filter((r) => r.status === s).length;
-  blk.innerHTML = `<h3>Checks</h3>${whoseNote()}<p class="sub">${[["error", "could not run"], ["fail", "fail"], ["warn", "warn"], ["pass", "hold"], ["info", "inventory"]].filter(([s]) => n(s)).map(([s, w]) => `${n(s)} ${w}`).join(" · ")} — ${measuredLine()}. Every rule is measured on every deploy; <a href="#needs">what needs you</a> lists the failures across the system.</p>`;
+  blk.innerHTML = `<h3>Checks</h3><p class="sub">${[["error", "could not run"], ["fail", "fail"], ["warn", "warn"], ["pass", "hold"], ["info", "inventory"]].filter(([s]) => n(s)).map(([s, w]) => `${n(s)} ${w}`).join(" · ")} — ${measuredLine()}. Every rule is measured on every deploy; <a href="#needs">what needs you</a> lists the failures across the system.</p>`;
   const list = el("div", "checks__list");
   const O = { error: 0, fail: 1, warn: 2, pass: 3, info: 4 };
   rs.slice().sort((a, b) => O[a.status] - O[b.status]).forEach((r) => list.appendChild(ruleCard(r)));
@@ -1171,14 +1171,16 @@ function blocksPage(id) {
   if (!base()) { box.remove(); open.remove(); cap.textContent = "The adapter names no live site (live in site-kit.config.mjs), and this page is not served under the site: nothing to show here."; }
   else {
     const size = () => FRAME_SIZES.find(([w]) => w === st.w);
-    const fit = () => { const [w, h] = size(), k = Math.min(1, (box.clientWidth || w) / w); fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${k})`; box.style.height = Math.round(h * k) + "px"; };
+    // scaled to fit the column, and never taller than most of the screen (the pictures stay in reach)
+    const scaleOf = () => { const [w, h] = size(), room = box.parentElement.clientWidth || w; return Math.min(1, room / w, Math.max(0.2, (innerHeight * 0.72) / h)); };
+    const fit = () => { const [w, h] = size(), k = scaleOf(); fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${k})`; box.style.width = Math.round(w * k) + "px"; box.style.height = Math.round(h * k) + "px"; };
     // the block's own address when it has an id; else, on the same origin, the frame is scrolled to its selector
     const load = () => {
       const u = base() + (b.page || "") + (b.anchor ? "#" + b.anchor : "");
       const [w, h] = size();
       $$("[data-w]", live).forEach((x) => x.setAttribute("aria-pressed", +x.dataset.w === st.w));
       $$("[data-src]", live).forEach((x) => x.setAttribute("aria-pressed", x.dataset.src === st.src));
-      cap.innerHTML = `${w}×${h}, ${st.src === "build" ? "this build" : "the live site (main)"}, drawn at ${Math.round(Math.min(1, (box.clientWidth || w) / w) * 100)}%.${b.anchor ? "" : st.src === "build" ? "" : " This block has no address of its own: scroll the frame to it."}`;
+      cap.innerHTML = `${w}×${h}, ${st.src === "build" ? "this build" : "the live site (main)"}, drawn at ${Math.round(scaleOf() * 100)}%.${b.anchor ? "" : st.src === "build" ? "" : " This block has no address of its own: scroll the frame to it."}`;
       open.href = u; fit(); fr.src = u;
     };
     fr.addEventListener("load", () => { if (b.anchor || !b.selector) return; try { const t = fr.contentDocument && fr.contentDocument.querySelector(b.selector); if (t) t.scrollIntoView(); } catch (e) { /* another origin */ } });
@@ -1187,7 +1189,7 @@ function blocksPage(id) {
       if (x.dataset.w) st.w = +x.dataset.w; else st.src = x.dataset.src;
       store.set("frame", st); load();
     });
-    const ro = new ResizeObserver(() => fit()); ro.observe(box); onLeave(() => ro.disconnect());
+    const ro = new ResizeObserver(() => fit()); ro.observe(live); onLeave(() => ro.disconnect());
     load();
   }
 

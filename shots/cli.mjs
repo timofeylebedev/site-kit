@@ -36,17 +36,19 @@ export async function run(args, cfg) {
   let todo = blocks, kept = null, skipped = {};
   if (changedOnly) {
     const ref = typeof opt("base") === "string" ? opt("base") : "origin/report-data";
-    if (ref.startsWith("origin/")) {
+    // --base may also be an index.json on disk (an earlier local run: <out>/shots/index.json kept aside)
+    const file = ref.endsWith(".json") && io.exists(ref);
+    if (!file && ref.startsWith("origin/")) {
       const branch = ref.slice(7);
       io.tryGit("fetch", "--quiet", "--no-tags", "--depth=1", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`);
     }
-    const text = io.tryGit("show", `${ref}:shots/index.json`);
+    const text = file ? io.read(ref) : io.tryGit("show", `${ref}:shots/index.json`);
     try { kept = text ? JSON.parse(text) : null; } catch { kept = null; }
-    if (!kept) console.log(`shots: no kept pictures (${ref}:shots/index.json): every block`);
+    if (!kept) console.log(`shots: no kept pictures (${file ? ref : `${ref}:shots/index.json`}): every block`);
     else {
       todo = [];
       for (const b of blocks) {
-        const why = whatChanged(kept.blocks?.[b.id], now[b.id], sizeKeys);
+        const why = whatChanged(kept.blocks?.[b.id], now[b.id], sizeKeys, b);
         if (why.length) { todo.push(b); console.log(`  ${b.id}: ${why.slice(0, 3).join("; ")}${why.length > 3 ? ` (+${why.length - 3})` : ""}`); }
         else skipped[b.id] = kept.blocks[b.id].taken;
       }
@@ -99,7 +101,7 @@ export async function run(args, cfg) {
     rmSync(join(outDir, b.id), { recursive: true, force: true });
     if (r.sizes.length) mkdirSync(join(outDir, b.id), { recursive: true });
     for (const s of r.sizes) { writeFileSync(join(outDir, s.file), s.buffer); n++; bytes += s.bytes; delete s.buffer; }
-    index.blocks[b.id] = { title: b.title || b.id, page: b.page || "", selector: b.selector, files: now[b.id], taken, commit, sizes: r.sizes, ...(r.missed.length ? { missed: r.missed } : {}) };
+    index.blocks[b.id] = { title: b.title || b.id, page: b.page || "", selector: b.selector, ...(b.frames ? { frames: b.frames } : {}), files: now[b.id], taken, commit, sizes: r.sizes, ...(r.missed.length ? { missed: r.missed } : {}) };
   }
   writeFileSync(join(outDir, "index.json"), JSON.stringify(index, null, 1));
   const missed = todo.filter((b) => !results[b.id].sizes.length).map((b) => b.id);

@@ -11,7 +11,7 @@ export const nowOnly = (html) => typeof html !== "string" ? html : html
   .replace(/\s*\((?:was|before:?) [^()]*\)/g, "")                     // «(was 0.8s / 18%)»
   .replace(/,\s*was [\d.]+(?:px)?(?=[,;.)]|$)/g, "")                    // «31 at 390, was 36»
   .replace(/\s*\((?:today|since today)\)/g, "")
-  .replace(/;\s*[^;()]*\bbefore\)/g, ")")                               // «(…; Pragmatica 700, 24 → 32 before)»
+  .replace(/;\s*[^;()]*\bbefore\)/g, ")")                               // «(…; 700, 24 → 32 before)»
   .replace(/\s+since today(?=[.,;)])/g, "")
   .replace(/\btoday's\b/g, "the")
   .replace(/\b[Ss]ince today,?\s*/g, "");
@@ -196,7 +196,7 @@ export function motionFromCode(css, js) {
   rows.sort((a, b) => (a.group === "tokens" ? -1 : b.group === "tokens" ? 1 : a.group.localeCompare(b.group)));
   return [
     { type: "curves", title: "Curves", sub: "Every curve the stylesheets name in a custom property or a script keeps in a constant.", items: curves },
-    { type: "durations", title: "Durations", sub: "Times named in custom properties, and every time written in a transition or an animation.", rows, max: Math.max(1, Math.min(2, ...rows.map((r) => r.s).filter((s) => s > 0).concat(2))) },
+    { type: "durations", title: "Durations", sub: "Times named in custom properties, and every time written in a transition or an animation.", rows, max: Math.min(2, Math.max(0.5, ...rows.map((r) => r.s))) },
   ].filter((b) => (b.items || b.rows).length);
 }
 

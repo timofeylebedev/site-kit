@@ -136,7 +136,7 @@ export async function buildReport(cfg, opts = {}) {
   // ── the checks: this commit's (just run), or the last deploy of main's (report-data) ─────────────────────────────
   const outDir = io.abs(P.out);
   const local = (f) => (fs.existsSync(path.join(outDir, f)) ? fs.readFileSync(path.join(outDir, f), "utf8") : null);
-  const headFull = (process.env.SITE_KIT_HEAD_SHA || tryGit("rev-parse", "HEAD") || "").trim();
+  const headFull = (process.env.SITE_KIT_SHA || tryGit("rev-parse", "HEAD") || "").trim();
   // the branch it was built from (GitHub's checkout of a pull request has no branch of its own)
   const ref = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || (tryGit("rev-parse", "--abbrev-ref", "HEAD") || "").trim();
   let checksState = local("state.json"), checksRecord = local("record-chromium.json"), whose = null;

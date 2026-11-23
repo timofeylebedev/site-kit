@@ -133,6 +133,21 @@ so in its README and in this file.
    The report shows each picture with its date and marks it "may be out of date" when a file's fingerprint now
    differs. For most looks the report shows the live site in a frame instead (`../#<anchor>` when the report is
    served under the site at `report/`, else `<live>#<anchor>`), at a width the reader picks.
+   A block may say `frames: [0, 0.5, 1]` (screens taken as the page scrolls through it, for blocks played by the
+   scroll: then `sizes` has one entry per frame, `hero/390x844.jpg`, `hero/390x844-2.jpg` …, with `frame` and `at`);
+   `report.shotSizes` sets the sizes (default `390x844,1440x900`). Details: `shots/README.md`.
+
+## In CI
+
+The kit's reusable workflows (`.github/workflows/`; the files a site copies are in `.github/templates/`) run every
+command as `npx --no-install site-kit …` from the site's own node_modules, and set for them `SITE_KIT_SHA` (the
+commit measured: a pull request's head, else `github.sha`) and `SITE_KIT_PR` (the pull request's number, empty on
+main); commands read these before asking git. The checks job calls, in order: `site-kit changed` (a pull request
+only), `checks measure --engine <e> [--quick]` per engine, `checks state [--<engine> <out>/record-<engine>.json …]
+--prev <out>/prev/state.json --prev-record <out>/prev/record.json` (main's latest, fetched from report-data by the
+workflow; the files may be missing), `shots --changed|--all`, `checks keep [--pr <n>]`, `report --out
+<dist>/<report-path>`; on a closed pull request `checks keep --forget <n>`. `keep` puts `<out>/shots/` on report-data
+only from main (a pull request's pictures stay in its preview).
 
 ## Browser helpers (`runtime/`)
 
