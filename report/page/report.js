@@ -1173,7 +1173,7 @@ function blocksPage(id) {
     const size = () => FRAME_SIZES.find(([w]) => w === st.w);
     // scaled to fit the column, and never taller than most of the screen (the pictures stay in reach)
     const scaleOf = () => { const [w, h] = size(), room = box.parentElement.clientWidth || w; return Math.min(1, room / w, Math.max(0.2, (innerHeight * 0.72) / h)); };
-    const fit = () => { const [w, h] = size(), k = scaleOf(); fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${k})`; box.style.width = Math.round(w * k) + "px"; box.style.height = Math.round(h * k) + "px"; const pc = $(".pc", cap); if (pc) pc.textContent = Math.round(k * 100) + "%"; };
+    const fit = () => { const [w, h] = size(), k = scaleOf(); fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${k})`; box.style.maxWidth = Math.round(w * k) + "px"; box.style.height = Math.round(h * k) + "px"; const pc = $(".pc", cap); if (pc) pc.textContent = Math.round(k * 100) + "%"; };
     // the block's own address when it has an id; else, on the same origin, the frame is scrolled to its selector
     const load = () => {
       const u = base() + (b.page || "") + (b.anchor ? "#" + b.anchor : "");
@@ -1255,7 +1255,9 @@ function go(hash, opt = {}) { if (location.hash !== hash) history.pushState(null
 // what a page set up outside itself (listeners on the window, observers) is undone when the next page is built
 const LEAVE = [];
 const onLeave = (fn) => LEAVE.push(fn);
+let leaveMark = 0;
 function route(opt = {}) {
+  leaveMark = LEAVE.length;                                // what the page about to be built sets up comes after this
   const prevItems = LB.items; LB.items = [];               // the pictures of the page about to be built
   if (!lb.hidden) lbClose(true);
   const h = decodeURIComponent(location.hash.slice(1)) || "needs";
@@ -1301,7 +1303,8 @@ function route(opt = {}) {
 }
 function swap(node, title) {
   hideTip();
-  LEAVE.splice(0).forEach((fn) => { try { fn(); } catch (e) {} });
+  // only the old page's: the new one was built (and set up its observers) before it is swapped in
+  LEAVE.splice(0, leaveMark).forEach((fn) => { try { fn(); } catch (e) {} });
   main.innerHTML = "";
   main.appendChild(node);
   document.title = (title ? title + " · " : "") + (SITE.name || "The system");

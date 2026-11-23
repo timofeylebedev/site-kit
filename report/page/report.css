@@ -398,5 +398,5 @@ input[type="range"] { accent-color: var(--accent); }
 .whose b { color: var(--warn); }
 .toc a[aria-current] { color: var(--fg); background: var(--surface-3); border-color: var(--line-2); }
 .toc .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-left: 6px; vertical-align: middle; background: var(--warn); }
-.bframe { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r); background: #fff; max-width: 100%; }
+.bframe { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r); background: #fff; width: 100%; box-sizing: content-box; }
 .bframe iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; background: #fff; }
