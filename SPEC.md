@@ -52,8 +52,10 @@ export default {
     rounds, shots,                     // optional: the site's review rounds (typed blocks) and their pictures
   },
 
-  // the palette as the checks and the report see it: [{ name, value: "#rrggbb[aa]", css: "--ink-70", group, use }]
-  colours: (io) => [...],              // io = siteIO(cfg): { read, json, files, exists, git, tryGit, abs, rel }
+  // the palette as the checks and the report see it: read(json of `file`) → [{ name, value: "#rrggbb[aa]", css: "--ink-70",
+  // group, use }]; the report reads the file now and at its baseline commit (new / changed marks). groups: the report's
+  // groups, [key, label, about, contrast?] ("on-white": the colour as text on white; "white-on": white text on it)
+  colours: { file: "design/tokens.json", read: (json) => [...], groups: [["ink", "Ink", "…", "on-white"], ...] },
   // the stylesheets where custom properties are defined (generated tokens first), and the page steps (custom media)
   css: { tokens: ["src/styles/base/tokens.gen.css", ...], media: "src/styles/base/media.css" },
 
@@ -64,7 +66,8 @@ export default {
     unstyle: [[/scrollbar-gutter:\s*stable/g, "scrollbar-gutter:auto"]],   // rewritten in served documents and CSS
     skip, notIcons, typeObjects, align, cards, paragraphs,      // selectors for the collector
     objectRadii, ratioFamilies,
-    consent: { button, storage, version: (io) => number, allowedBefore: [] },   // or null: a site with no consent
+    sections, sweepStyle, boxes, boxSkip, files, notes, dataBranch,   // optional, defaults in checks/README.md
+    consent: { button, label, storage, hover, version: (io) => number, allowedBefore: [] },   // or null: a site with no consent
     probes: () => ({ key: value, "@layout": "state" }),          // runs in the page
     mapRows: { "@layout": "Label" },
     scenarios: [{ id, area, given, when, then, size: [w, h], consent?, run: async (page, h) => true | "what failed" }],
@@ -74,17 +77,28 @@ export default {
   rules: {
     // the site's own code rules, added to the kit's: (ctx) => [{ id, area, title, how, fails: ["file:line what"], note }]
     code: (ctx) => [...],
+    // set up the kit's generic code rules (checks/source.mjs; a rule whose input is missing is not run)
+    generated, drawings: ["src/styles/art/"], objectType: ["--hero-title"], steps: { shared, own }, curves: { modules, tokens }, notes,
     // the lessons (rules/learnings.mjs): which apply and where; a missing key means the rule's default
-    learnings: { scrollModule: "src/scripts/scroller.js", ... },
+    // (scrollModule may be a list; loadedModule, gpuModule, boxScript, boxPage, entry, consent: { module, gate, allowed } | false,
+    // barGuard: rules/README.md)
+    learnings: { scrollModule: "src/scripts/scroller.js", entry: "src/scripts/main.js", ... },
   },
+
+  // the responsive audit (audit/README.md): pages (default: checks.pages without a status), sizes (default: the nine),
+  // what is left out of each check, the sections looked at one by one, a style added before axe, a query for every page
+  audit: { pages: [""], sizes, skip, skipSmall, skipTargets, sections, axeStyle, query },
 
   report: {
     title: "Flow Medium · the system",
     accent: "#884dff",
     since: "<commit>",                 // what the system page marks new against (optional)
     typesetSamples: [{ lang, text }],
-    // the blocks of the page (layer 3 pictures and the live frame): each with the files that change its look
-    blocks: [{ id: "hero", title: "Hero", page: "", selector: ".hero", files: ["src/styles/hero.css", "src/scripts/hero.js"] }],
+    fonts: { text: { family, files: { 400: "x-400.woff2" } }, display: { … } },   // the page's text and the specimens
+    typeRoles, column, steps, shadow(s), grounds, cssVars, notes, picture, roundBlocks, motionBase,   // report/README.md
+    // the blocks of the page (layer 3 pictures and the live frame): each with the files that change its look;
+    // anchor: the id of the block's element (the frame's address), else the frame is scrolled to `selector`
+    blocks: [{ id: "hero", title: "Hero", page: "", anchor: "product", selector: ".hero", files: ["src/styles/hero.css", "src/scripts/hero.js"] }],
   },
 
   images: { from: "assets-src/img", to: "src/assets/img", ... },
@@ -114,10 +128,11 @@ so in its README and in this file.
 3. **Pictures** (`site-kit shots`): only for blocks whose files changed since their last picture (on main, after the
    checks), when asked (`--all`, workflow input, the PR label `shots`), or at a round's end. Kept on report-data in
    `shots/<block>/<w>x<h>.jpg` with `shots/index.json`:
-   `{ blocks: { <id>: { files: { "<path>": "<git blob sha>" }, taken: "<iso>", commit, sizes: [{ w, h, file }] } } }`.
+   `{ blocks: { <id>: { files: { "<path>": "<git blob sha>" }, taken: "<iso>", commit, sizes: [{ w, h, file }] } } }`
+   (`file` relative to `shots/`: `hero/390x844.jpg`). A local `site-kit shots` writes the same into `<out>/shots/`.
    The report shows each picture with its date and marks it "may be out of date" when a file's fingerprint now
-   differs. For most looks the report shows the live site in a frame instead (same origin: `<live>#<block>`), at a
-   width the reader picks.
+   differs. For most looks the report shows the live site in a frame instead (`../#<anchor>` when the report is
+   served under the site at `report/`, else `<live>#<anchor>`), at a width the reader picks.
 
 ## Browser helpers (`runtime/`)
 
@@ -125,16 +140,23 @@ Plain ES modules, no dependencies, each with a comment saying which lesson it ca
 
 - `loaded.js` — `whenLoaded(fn)`: runs now if the page's `load` has fired, else on it.
 - `styles.js` — `stylesReady()`: a promise that settles when every stylesheet has applied (WebKit bug 261655).
-- `gpu.js` — `realGPU(canvas?)`: false for software renderers (`failIfMajorPerformanceCaveat` + renderer name).
-- `scroller.js` + `box.js` + `bar-guard.css` — Safari's bars: the page scrolls in its own box on a Mac (solid bar),
-  one guard at the bottom on iPhone; `y()`, `to()`, `max()`, `onScroll()`, `watchSize()`, `ioRoot`.
+- `gpu.js` — `realGPU()`: false for software renderers (`failIfMajorPerformanceCaveat` + renderer name), asked once on
+  a throwaway canvas; `gpuContext(canvas, kind, attrs, { force })`: a context on a real GPU or null; `isSoftware(gl)`,
+  `rendererOf(gl)` for a context that is kept in software in a lighter form.
+- `scroller.js` + `box.js` + `safari.css` — Safari's bars: the page scrolls in its own box on a Mac (solid bar),
+  one guard at the bottom on iPhone (`.bar-guard`); `y()`, `to()`, `by()`, `max()`, `height()`, `onScroll()`,
+  `watchSize()`, `ioRoot`, `box`. box.js is a classic script inlined in every page's `<head>`; its options (class,
+  page selector, the `?<param>=` switch) are `data-box-*` attributes of `<html>` (runtime/README.md).
 
 ## The lessons as rules (`rules/learnings.mjs`)
 
 Each fails a PR when broken, with the file and line: nothing reads `window.scrollY` / listens to the window's `scroll`
 outside the scroll module; every WebGL context asks for `failIfMajorPerformanceCaveat` (or goes through `gpu.js`); no
 bare `addEventListener("load", …)` (use `whenLoaded`); the start-up waits for stylesheets; anything that loads a
-third party starts from consent. A site turns one off only with a decision in decisions.json that names it.
+third party starts from consent; and, cheaply checked from the source: observers that look ahead watch from the
+scroller (`ioRoot`), a stylesheet loaded on its own imports the custom media, the bottom bar's guard stays empty, every
+page with the box runs box.js first. Ids `learn.*`, area "Code" (rules/README.md lists them). A site turns one off
+only with a decision in decisions.json that names it.
 
 ## Code rules: one shape
 

@@ -1,0 +1,4 @@
+{ "decisions": [
+  { "id": "old-colour", "kind": "exception", "what": "the old blue", "decided": "Owner, 2026-11-01", "why": "a test", "rule": "colours from tokens", "fix": "a token",
+    "rules": [{ "rule": "colour-tokens", "files": "legacy\\.css$" }] }
+] }

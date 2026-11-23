@@ -3,10 +3,11 @@
 The browser breaks a line at any space and after any hyphen or dash. Typesetting decides which of those places a
 reader should never see a line end at: «в | доме», «10 | км», «Dr. | Smith», «— » at the start of a line, «e- | mail».
 This folder does that for the site's pages when they are built, for Russian and English, and the same code can run
-anywhere a text is (a script's message, a Figma layer, a file on the command line).
+anywhere a text is (a script's message, a Figma layer, a file on the command line, the review page of the system).
 
-It replaced `build/typograph.js` (Oct 19, 2026). What changed, measured: see the decision `typeset` in
-`design/decisions.json`.
+It was written for Flow Medium (`build/typeset/`, Oct 2026), where it replaced a regex typograph (FM's decision
+`typeset` has the measured difference), and moved into the kit unchanged: on FM's four pages the kit's output is
+byte-identical to FM's, and `--lint` lists the same 23 findings.
 
 ## Files
 
@@ -16,8 +17,10 @@ It replaced `build/typograph.js` (Oct 19, 2026). What changed, measured: see the
 | `words.js` | the word lists the rules read (prepositions, units, labels, honorifics…) |
 | `html.js` | the rules on an HTML page: a real parser (parse5), texts joined across inline tags, the language of each block |
 | `lint.js` | the visible characters a proofreader would change: reported, never changed by the build |
-| `cli.mjs` | `npm run typeset -- …` |
-| `test.mjs` | `npm run test:typeset`: every rule as examples |
+| `index.js` | the public API: `import { typesetHtml, typeset, lint } from "site-kit/typeset"` |
+| `vite.js` | the Vite plugin: `import { typeset } from "site-kit/typeset/vite"` |
+| `cli.mjs` | `site-kit typeset …` |
+| `../test/typeset.test.mjs` | every rule as examples (`npm test` in the kit) |
 
 ## How it works
 
@@ -25,8 +28,9 @@ It replaced `build/typograph.js` (Oct 19, 2026). What changed, measured: see the
    `div`…). Inline tags (`a`, `span`, `b`, `em`…) are part of the block: «в <a>доме</a>» is one text. A `<br>` ends a
    text. `<template>` content is included (the cookie notice). Left alone: `script`, `style`, `svg`, `pre`, `code`,
    `kbd`, `samp`, `var`, `textarea`, `noscript`, `title`, `option` and the other raw-text elements, anything with
-   `data-typeset="off"` or `contenteditable`, the `<head>`, and every attribute. Inside `data-reveal="chars"` (letters
-   split one by one by motion.js) or `data-typeset="spaces"` only no-break spaces are written, no invisible joiners.
+   `data-typeset="off"` or `contenteditable`, the `<head>`, and every attribute. Inside `data-typeset="spaces"`, and
+   inside the elements a site's scripts split letter by letter (named in `typeset.spacesOnly`, e.g.
+   `data-reveal=chars`), only no-break spaces are written, no invisible joiners.
    Text the parser does not keep as written (a stray end tag inside a sentence, a NUL) is left alone.
 2. **Language.** Each block takes the nearest `lang` attribute (`<html lang="ru">`, a `<span lang="en">` inside it).
    `ru` and `en` have their own rules; any other language gets the rules for every language.
@@ -37,18 +41,18 @@ It replaced `build/typograph.js` (Oct 19, 2026). What changed, measured: see the
    последний» is held word by word (the old typograph missed every second word of a chain).
 5. **Joins.** Where two parts touch with no space but a browser may still break (after a hyphen or a dash), a hold is a
    word joiner (U+2060): invisible, and the real hyphen stays, so copying and searching still find «e-mail».
-6. **No length limit.** A hold is never let go because the piece it makes is long (Tim, Oct 24, 2026). `npm run
-   typeset -- src/index.html` prints each text's longest piece in brackets, so a long one is easy to spot; the longest
-   on the site's pages are 19 letters on the home page and 18 in a heading of the privacy policy.
+6. **No length limit.** A hold is never let go because the piece it makes is long (Tim, Oct 24, 2026). `site-kit
+   typeset src/index.html` prints each text's longest piece in brackets, so a long one is easy to spot (on Flow
+   Medium the longest are 19 letters on the home page and 18 in a heading of the privacy policy).
 7. **In place.** Only the characters the rules decide on change, at their place in the source; entities (`&nbsp;`,
    `&laquo;`, `&#8209;`) and everything else stay exactly as written.
 
-Strengths (recorded for each hold, shown by `npm run typeset`): *author* 9 (a no-break space you typed: kept, except
+Strengths (recorded for each hold, shown by `site-kit typeset`): *author* 9 (a no-break space you typed: kept, except
 next to a link) · *must* 3 · *should* 2 · *nice* 1.
 
 GSAP's SplitText (checked Oct 24 on the real page and a test page, SplitText 3.15): it keeps every no-break space, and
 lines split by it keep every hold. Three things to know for new texts: in a heading split letter by letter
-(`data-reveal="chars"`) a word joiner would become an empty animated letter, so none is written there; a hold right at
+(`typeset.spacesOnly`) a word joiner would become an empty animated letter, so none is written there; a hold right at
 the edge of an inline tag («в <a>доме</a>») is lost in every split mode, since SplitText makes the tag's text a box of
 its own, so keep links and other tags out of split headings; and a held group wider than the line in a letter-split
 heading breaks between letters (each letter is its own box).
@@ -115,7 +119,7 @@ word in display type).
 
 ## What the build reports instead of changing
 
-`npm run typeset -- --lint src/*.html` lists, with line and column:
+`site-kit typeset --lint src/*.html` lists, with line and column:
 
 | check | example | the fix it suggests |
 |---|---|---|
@@ -134,22 +138,73 @@ word in display type).
 
 ## Command line
 
+Run in the site's root (file paths are relative to it):
+
 ```
-npm run typeset -- src/index.html                  every text of the page with its holds and [its longest piece]
-npm run typeset -- --lint src/*.html               only the findings
-npm run typeset -- --text "Dr. Smith on page 12" --lang en [--heading]
-npm run typeset -- --json src/index.html           everything as JSON
-npm run test:typeset                               the examples
+site-kit typeset src/index.html                  every text of the page with its holds and [its longest piece]
+site-kit typeset --lint src/*.html               only the findings
+site-kit typeset --fix src/privacy.html          the findings' fixes written into the file (commit first)
+site-kit typeset --text "Dr. Smith on page 12" --lang en [--heading]
+site-kit typeset --json src/index.html           everything as JSON
 ```
 
-## In other places
+## The site's settings: `typeset` in `site-kit.config.mjs`
 
-- **A script's text** (`book.js`, `cookies.js`): `import { typeset } from "../../build/typeset/core.js"` and
-  `el.textContent = typeset("Открыть запись на сайте Планёрки", { lang: "ru" })` (≈ 5 KB gzipped with the word lists).
-  Not done yet: the site's few script texts are short.
+All optional; with none the typesetter behaves exactly as Flow Medium's did before the move, apart from letter-split
+headings (below).
+
+| field | what | default |
+|---|---|---|
+| `spacesOnly` | attributes `"name=value"` of the elements a script splits letter by letter: only no-break spaces there (FM: `["data-reveal=chars"]`, motion.js) | `[]` (`data-typeset="spaces"` always counts) |
+| `off` | names of rules to leave out (`["last-word"]`) | `[]` |
+| `lang` | the language of a text with no `lang` attribute around it | none: such a text gets only the rules for any language |
+| `pages` | (Vite plugin) which pages: file names, a RegExp or a function of the path | every page |
+| `warn` | (Vite plugin) `true`: one line per page with findings, first build only; `false`: silent; `"error"`: the build stops | `true` |
+
+The word lists (prepositions, units, labels…) are the kit's, not a site's: a word missing for one site is missing for
+all, so add it in `words.js` with a test.
+
+## In a site
+
+- **The build:** `import { typeset } from "site-kit/typeset/vite"` and `plugins: [typeset(), …]` in vite.config.js.
+  With no options the plugin reads `typeset` from the site's `site-kit.config.mjs` (the build must run in the site's
+  root, or set `SITE_KIT_ROOT`); `typeset({ … })` takes the same fields directly. Put it `order: "pre"` before other
+  HTML plugins (it is), so it sees the page as written.
+- **A script's text** (a dialog, a message): import the core alone, `import { typeset } from "site-kit/typeset/core.js"`
+  (≈ 5 KB gzipped with the word lists; `site-kit/typeset` itself also exports html.js, which pulls in parse5). Then
+  `el.textContent = typeset("Открыть запись", { lang: "ru" })`.
+- **The review page** bundles `core.js` and `lint.js` (no Node imports in either: keep it so).
 - **Figma**: `core.js` has no imports but `words.js`; pasted into `use_figma` together, `typeset(node.characters)`
   gives the layer the same breaks as the site.
-- **Another project**: copy the folder (parse5 and entities are the only packages `html.js` needs).
+- **Packages:** `html.js` needs `parse5` and `entities` (peer dependencies: the site's own node_modules).
+
+## QQ's typograph (`build/typograph.js`) and the kit
+
+QQ still runs the regex typograph Flow Medium had before Oct 19 (Russian rules on every text node, several passes).
+Read side by side and run on sample texts (QQ's pages are generated and none were built here, so not on its pages):
+
+What QQ would gain:
+- **Texts across tags.** QQ's runs on each text node alone: «в <a>доме</a>» is never held. The kit joins a block's
+  words across inline tags.
+- **Whole chains.** The regex passes miss words of a chain: QQ gives «а⍽не в⍽последний», the kit «а⍽не⍽в⍽последний»
+  (it answers every space once).
+- **Languages.** QQ applies Russian rules to English text too (coffee names, «Ethiopia Yirgacheffe in a bag»);
+  the kit follows `lang`.
+- **Fewer wrong holds.** QQ holds any number to any word after it («в⍽2026⍽и⍽дальше», «3⍽Политики»); the kit only
+  to units, months and counted things, never to a capital or a short word.
+- **Joins and links:** `COVID-⁀19`, `кто-⁀то`, ranges, phones as one piece, `<wbr>` in long links and e-mails.
+- **Source kept as written.** QQ decodes only five entities and re-encodes `&`, so a named entity it does not know is
+  broken: `&laquo;да&raquo;` comes out `&amp;laquo;да&amp;raquo;` (shown as typed). The kit changes only the
+  characters it decides on and leaves every entity as written.
+- **The lint** (straight quotes, hyphens for dashes, look-alike letters), the command line, and the tests.
+
+What QQ would lose or must check:
+- **Line breaks move.** Every page wraps a little differently; run the audit (cut text, sideways scroll) and look at
+  tight places (cards, buttons, the tab bar) after switching.
+- **`<option>` text** is not touched by the kit (QQ's typograph did touch it); no visible change in a native select.
+- **Two packages** (`parse5`, `entities`) and a slower build step: a full parser and the lint, 0.28 s for a 101 KB
+  page against QQ's 0.03 s (measured on FM's privacy policy).
+- QQ's scripts that write Russian text (the bag, favourites, dialogs) can use `core.js` in the browser to match.
 
 ## Fonts
 

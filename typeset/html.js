@@ -160,3 +160,12 @@ export function typesetHtml(src, opts = {}) {
   parts.push(src.slice(at));
   return { html: parts.join(""), report };
 }
+
+// The site's settings (cfg.typeset of site-kit.config.mjs) as options of typesetHtml: { lang, off, spacesOnly }
+export function settings(t = {}) {
+  const o = {};
+  if (t?.lang) o.lang = t.lang;
+  if (t?.off?.length) o.off = t.off;
+  if (t?.spacesOnly?.length) o.spacesOnly = t.spacesOnly;
+  return o;
+}

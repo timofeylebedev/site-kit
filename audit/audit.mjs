@@ -1,0 +1,261 @@
+// The built pages checked in a real browser at the screen sizes that matter (after the site's build).
+//
+// At each size the whole page is scrolled through (so every block has come in and every pinned part has moved), then
+// every section is looked at on screen. It fails on:
+//   · sideways scroll: the page wider than the screen, at any point of the scroll;
+//   · text cut off: a line of text reaching outside a block that clips it, or outside the screen (what the adapter
+//     lists in audit.skip is left out: drawings, sliding strips, anything cut off on purpose);
+//   · text under 12px as it is drawn (scaling included), outside audit.skipSmall;
+//   · a link or button smaller than 24×24px to tap (WCAG 2.2, 2.5.8);
+//   · axe-core rules (accessibility), at the sizes marked `axe`;
+//   · all of the above but axe with the browser's text made bigger (sizes with `font`, e.g. 24px);
+//   · text drawn over a canvas (dots, shaders), which axe cannot see: its contrast is measured from the pixels behind it
+//     (the text hidden for a moment), at the axe sizes;
+//   · a script error on the page.
+// Decisions taken on purpose are in the site's decisions.json, each with who, when and why: an exception whose `audit`
+// field names what it covers ({ axe: "<rule>", target: "<regex>" } or { pixels: ["<selector>"] }) is not a failure,
+// but it is measured and printed under "Kept as designed" on every run, so it stays in sight.
+//
+// Engines: chromium (default; PLAYWRIGHT_CHROMIUM names its binary), firefox, webkit (`npx playwright install <engine>`).
+// They have no phone emulation of Chromium's kind (Firefox none at all), so there the phone sizes are plain windows of
+// that size. The bigger text is set in Chromium through DevTools and in Firefox through its settings; WebKit leaves
+// those sizes out. Headless Chromium without a GPU draws WebGL with SwiftShader (the launch flags below).
+import { createServer } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { extname, join, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { siteIO } from "../lib/config.mjs";
+
+// the nine sizes Flow Medium settled on: a small and a common phone, a tablet both ways, a phone turned sideways, a short
+// laptop, a big screen; and the browser's text made bigger (Settings → Appearance → Font size: "Very large" is 24px):
+// the rem sizes grow, and the em steps of the media queries give the layout of a narrower screen
+export const SIZES = [
+  { w: 320, h: 568, touch: true, axe: true }, { w: 390, h: 844, touch: true }, { w: 768, h: 1024, touch: true },
+  { w: 844, h: 390, touch: true }, { w: 1024, h: 768, touch: true }, { w: 1366, h: 650 }, { w: 1920, h: 1080, axe: true },
+  { w: 390, h: 844, touch: true, font: 24 }, { w: 1366, h: 650, font: 24 },
+];
+
+/** The audit's settings: the adapter's `audit` section over the defaults (README.md). */
+export function settings(cfg) {
+  const a = cfg.audit || {};
+  const pages = (a.pages || (cfg.checks?.pages || [{ path: "" }]).filter((p) => !p.status))
+    .map((p) => (typeof p === "string" ? { path: p } : p));
+  return {
+    pages,
+    sizes: a.sizes || SIZES,
+    skip: a.skip || ".sprite",
+    skipSmall: a.skipSmall || ".sprite",
+    skipTargets: a.skipTargets || null,
+    sections: a.sections || ["main > section", "body > footer"],
+    axeStyle: a.axeStyle || null,
+    query: a.query || "",
+    launchArgs: a.launchArgs || ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
+  };
+}
+
+// ── a tiny static server for the built site, as GitHub Pages serves it (a folder's index.html, "x" → x.html, 404.html) ──
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
+  ".webp": "image/webp", ".avif": "image/avif", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+  ".woff2": "font/woff2", ".woff": "font/woff", ".json": "application/json", ".webmanifest": "application/manifest+json",
+  ".ico": "image/x-icon", ".mp4": "video/mp4", ".webm": "video/webm", ".txt": "text/plain", ".xml": "application/xml" };
+export function serve(dist) {
+  const isFile = async (f) => { try { return (await stat(f)).isFile(); } catch { return false; } };
+  const server = createServer(async (req, res) => {
+    const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    let file = join(dist, path.endsWith("/") ? path + "index.html" : path), status = 200;
+    if (!(await isFile(file))) {
+      if (await isFile(file + ".html")) file += ".html";
+      else if (await isFile(join(file, "index.html"))) file = join(file, "index.html");
+      else if (!extname(path) && (await isFile(join(dist, "404.html")))) { file = join(dist, "404.html"); status = 404; }
+      else { res.writeHead(404); res.end(); return; }
+    }
+    const body = await readFile(file);
+    res.writeHead(status, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
+    res.end(body);
+  }).listen(0);
+  return new Promise((done) => server.on("listening", () => done({ server, url: `http://localhost:${server.address().port}/` })));
+}
+
+// ── what is measured in the page ──
+function measure({ skip, skipSmall, skipTargets }) {
+  const vw = document.documentElement.clientWidth;
+  const name = (e) => e.tagName.toLowerCase() + (typeof e.className === "string" && e.className ? "." + e.className.trim().split(/\s+/)[0] : "");
+  const path = (e) => { const p = []; for (let x = e; x && x !== document.body && p.length < 3; x = x.parentElement) p.unshift(name(x)); return p.join(" > "); };
+  const shown = (e) => { for (let x = e; x; x = x.parentElement) { const s = getComputedStyle(x); if (s.display === "none" || s.visibility === "hidden" || +s.opacity === 0) return false; } const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const out = { clipped: [], small: [], targets: [] };
+  for (const e of document.querySelectorAll("h1, h2, h3, p, a, button, dt, dd, span")) {
+    if (e.closest(skip) || !e.textContent.trim() || !shown(e) || e.children.length > 3) continue;
+    const r = document.createRange(); r.selectNodeContents(e); const t = r.getBoundingClientRect();
+    if (t.right > vw + 1 || t.left < -1) out.clipped.push(`${path(e)} past the screen by ${Math.round(Math.max(t.right - vw, -t.left))}px`);
+    for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      if (!/(hidden|clip)/.test(s.overflowX + s.overflowY)) continue;
+      const q = a.getBoundingClientRect(), over = Math.max(q.left - t.left, t.right - q.right, q.top - t.top, t.bottom - q.bottom);
+      if (over > 1.5) out.clipped.push(`${path(e)} cut by ${name(a)} by ${Math.round(over)}px`);
+      break;
+    }
+  }
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n; (n = walker.nextNode()); ) {
+    const e = n.parentElement;
+    if (!e || !n.textContent.trim() || e.closest(skipSmall + ", script, style") || !shown(e)) continue;
+    // drawn height ÷ laid-out height: below 1 only when the element is scaled down. offsetHeight is whole px, so a box
+    // within 1px of its drawn height counts as not scaled (a trimmed 39.6px line box is not "scaled by 0.99")
+    const h = e.getBoundingClientRect().height;
+    const k = !e.offsetHeight || Math.abs(h - e.offsetHeight) < 1 ? 1 : h / e.offsetHeight;
+    const px = parseFloat(getComputedStyle(e).fontSize) * (k > 0.05 && k < 1.01 ? k : 1);
+    if (px < 11.95) out.small.push(`${path(e)} «${n.textContent.trim().slice(0, 24)}» ${px.toFixed(1)}px`);
+  }
+  for (const e of document.querySelectorAll("a[href], button")) {
+    if (!shown(e) || (skipTargets && e.closest(skipTargets))) continue;
+    // a stretched ::after (a whole card that is its link, a hit area grown past the box) counts
+    const r = e.getBoundingClientRect(), a = getComputedStyle(e, "::after"), extra = a.content !== "none" && a.position === "absolute" ? Math.max(0, -parseFloat(a.top) || 0) * 2 : 0;
+    if (Math.min(r.width, r.height) + extra < 24) out.targets.push(`${path(e)} ${Math.round(r.width)}×${Math.round(r.height)}px`);
+  }
+  return out;
+}
+
+// The contrast of a text drawn over a canvas: the text is made transparent for a moment, the box behind it is taken
+// from a screenshot, and every pixel is compared with the text's colour. The median is what is reported (dots move).
+const lum = (r, g, b) => { const f = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+async function canvasContrast(page, sel, sharp) {
+  const out = [], n = await page.locator(sel).count();
+  for (let i = 0; i < n; i++) {
+    const el = page.locator(sel).nth(i);
+    await el.evaluate((e) => e.scrollIntoView({ block: "center" })); await page.waitForTimeout(400);
+    const info = await el.evaluate((e) => {
+      const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+      for (let a = e.parentElement; a; a = a.parentElement) {           // cut off by a window (a sliding strip)?
+        const s = getComputedStyle(a); if (!/(hidden|clip)/.test(s.overflowX)) continue;
+        const q = a.getBoundingClientRect(); if (r.left < q.left - 1 || r.right > q.right + 1) return null;
+      }
+      if (r.width < 4 || r.height < 4 || r.top < 0 || r.bottom > innerHeight || r.left < 0 || r.right > innerWidth) return null;
+      const size = parseFloat(cs.fontSize), weight = parseInt(cs.fontWeight, 10), color = cs.color;   // read before hiding it
+      e.style.setProperty("color", "transparent", "important");
+      return { x: r.left, y: r.top, w: r.width, h: r.height, color, large: size >= 24 || (size >= 18.66 && weight >= 700), text: e.textContent.trim().slice(0, 24), owner: e.dataset.auditOwner || "" };
+    });
+    if (!info) continue;
+    let png;
+    try { await page.waitForTimeout(60); png = await page.screenshot({ clip: { x: info.x, y: info.y, width: info.w, height: info.h } }); }
+    finally { await el.evaluate((e) => e.style.removeProperty("color")); }
+    const { data, info: m } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    const [tr, tg, tb] = info.color.match(/[\d.]+/g).map(Number), lt = lum(tr, tg, tb), ratios = [];
+    for (let p = 0; p < data.length; p += m.channels) { const lb = lum(data[p], data[p + 1], data[p + 2]); ratios.push((Math.max(lt, lb) + 0.05) / (Math.min(lt, lb) + 0.05)); }
+    ratios.sort((a, b) => a - b);
+    out.push({ text: info.text, median: ratios[ratios.length >> 1], need: info.large ? 3 : 4.5, owner: info.owner });
+  }
+  return out;
+}
+
+/** Runs the audit. Returns { failures: [line], exceptions: [decision], kept: Map(decision id → [line]), engine, version }. */
+export async function audit(cfg, { engine = "chromium", log = console.log } = {}) {
+  const io = siteIO(cfg), S = settings(cfg);
+  const dist = io.abs(cfg.paths.dist);
+  if (!existsSync(join(dist, "index.html")) && !S.pages.every((p) => existsSync(join(dist, (p.path || "index") + ".html")))) {
+    const e = new Error(`audit: no ${cfg.paths.dist}/index.html — build the site first`); e.code = "NO_DIST"; throw e;
+  }
+  if (!["chromium", "firefox", "webkit"].includes(engine)) { const e = new Error(`audit: unknown engine ${engine}`); e.code = "BAD_ENGINE"; throw e; }
+  const req = createRequire(join(cfg.root, "package.json"));
+  const load = async (name) => { const m = await import(pathToFileURL(req.resolve(name)).href); return m.default || m; };
+  const playwright = await load("playwright"), sharp = await load("sharp");
+  const AXE = await readFile(req.resolve("axe-core/axe.min.js"), "utf8");
+
+  // decided on purpose (decisions.json): not failures, but measured and shown on every run
+  const decisions = io.json(cfg.paths.decisions, { decisions: [] }).decisions || [];
+  const EXCEPTIONS = decisions.filter((d) => d.kind === "exception");
+  const ACCEPTED = EXCEPTIONS.filter((d) => d.audit?.axe).map((d) => ({ rule: d.audit.axe, target: new RegExp(d.audit.target), id: d.id }));
+  const OWNED = EXCEPTIONS.flatMap((d) => (d.audit?.pixels || []).map((sel) => ({ sel, id: d.id })));
+  const kept = new Map();
+  const note = (id, line) => { if (!kept.has(id)) kept.set(id, []); if (kept.get(id).length < 6) kept.get(id).push(line); };
+
+  const { server, url } = await serve(dist);
+  const chrome = engine === "chromium";
+  const browser = await playwright[engine].launch(chrome ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM || undefined, args: S.launchArgs } : {});
+  log(`engine: ${engine} ${browser.version()}`);
+  const failures = [];
+  // Firefox: its text size is a setting of the browser, so a second browser is started with it
+  const big = engine === "firefox" && S.sizes.some((s) => s.font)
+    ? await playwright.firefox.launch({ firefoxUserPrefs: { "font.size.variable.x-cyrillic": 24, "font.size.variable.x-western": 24 } }) : null;
+  try {
+    for (const pg of S.pages) {
+      const address = url + (pg.path || "") + S.query;
+      const prefix = S.pages.length > 1 || pg.path ? `/${pg.path || ""} ` : "";
+      for (const s of S.sizes) {
+        if (s.font && !chrome && !big) continue;            // WebKit: no way to set the text size
+        const ctx = await (s.font && big ? big : browser).newContext({ viewport: { width: s.w, height: s.h }, hasTouch: !!s.touch, isMobile: !!s.touch && engine !== "firefox", bypassCSP: true });
+        const page = await ctx.newPage();
+        if (s.font && chrome) { const cdp = await ctx.newCDPSession(page); await cdp.send("Page.enable"); await cdp.send("Page.setFontSizes", { fontSizes: { standard: s.font, fixed: Math.round(s.font * 13 / 16) } }); }
+        const errors = [];
+        page.on("pageerror", (e) => errors.push(String(e)));
+        await page.goto(address, { waitUntil: "networkidle" });
+        await page.waitForTimeout(1200);
+        let overflow = 0;
+        for (let y = 0, H = 1; y < H; y += Math.round(s.h / 2)) {
+          H = await page.evaluate((y) => { scrollTo(0, y); return document.documentElement.scrollHeight; }, y);
+          await page.waitForTimeout(90);
+          overflow = Math.max(overflow, await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth));
+        }
+        await page.waitForTimeout(1200);
+        const found = { clipped: new Set(), small: new Set(), targets: new Set() };
+        for (const sel of S.sections) {
+          const n = await page.locator(sel).count();
+          for (let i = 0; i < n; i++) {
+            await page.locator(sel).nth(i).evaluate((e) => scrollTo(0, e.getBoundingClientRect().top + scrollY - 64));
+            await page.waitForTimeout(900);
+            const m = await page.evaluate(measure, { skip: S.skip, skipSmall: S.skipSmall, skipTargets: S.skipTargets });
+            for (const k of Object.keys(found)) m[k].forEach((x) => found[k].add(x));
+          }
+        }
+        const tag = prefix + `${s.w}×${s.h}` + (s.font ? ` (text ${s.font}px)` : "");
+        if (overflow > 0) failures.push(`${tag}: the page scrolls sideways by ${overflow}px`);
+        for (const [k, label] of [["clipped", "text cut off"], ["small", "text under 12px"], ["targets", "target under 24px"]]) found[k].forEach((x) => failures.push(`${tag}: ${label}: ${x}`));
+        errors.forEach((e) => failures.push(`${tag}: script error: ${e}`));
+        if (s.axe) {
+          await page.evaluate(() => scrollTo(0, 0));
+          // a decoration axe cannot see through (a layer outside the page) may be hidden for the check (audit.axeStyle)
+          if (S.axeStyle) await page.addStyleTag({ content: S.axeStyle });
+          await page.addScriptTag({ content: AXE });
+          const res = await page.evaluate(async () => { const r = await axe.run(document, { resultTypes: ["violations"] }); return { v: r.violations.map((x) => ({ id: x.id, nodes: x.nodes.map((n) => n.target.join(" ")) })), contrast: r.passes.some((x) => x.id === "color-contrast") || r.violations.some((x) => x.id === "color-contrast") }; });
+          if (!res.contrast) failures.push(`${tag}: axe could not check the contrast of any text (a layer it cannot see through?)`);
+          for (const x of res.v) for (const t of x.nodes) {
+            const a = ACCEPTED.find((a) => a.rule === x.id && a.target.test(t));
+            if (!a) failures.push(`${tag}: axe ${x.id}: ${t}`);
+            else note(a.id, `${tag}: axe ${x.id} on ${t.split(" ").pop()}`);
+          }
+          // every text drawn over a canvas (the blocks that hold one), found in the page itself
+          const n = await page.evaluate((owned) => {
+            let i = 0;
+            const blocks = new Set([...document.querySelectorAll("canvas")].map((c) => c.parentElement));
+            for (const box of blocks) {
+              const texts = [...box.querySelectorAll("h1, h2, h3, p, a")].filter((e) => e.textContent.trim() && !e.closest("[aria-hidden='true']"));
+              for (const e of texts) {
+                if (texts.some((o) => o !== e && e.contains(o))) continue;                     // the innermost text block only
+                const bg = getComputedStyle(e).backgroundColor.match(/[\d.]+/g);
+                if (bg && bg.length === 4 ? +bg[3] > 0.5 : bg && bg.length === 3) continue;     // it has a background of its own (a button)
+                e.dataset.auditPx = i++; e.dataset.auditOwner = owned.find((o) => e.matches(o.sel))?.id || "";
+              }
+            }
+            return i;
+          }, OWNED);
+          let measured = 0;
+          for (let i = 0; i < n; i++) for (const r of await canvasContrast(page, `[data-audit-px="${i}"]`, sharp)) {
+            measured++;
+            if (r.median >= r.need) continue;
+            const line = `${tag}: «${r.text}» ${r.median.toFixed(2)} : 1 over the canvas (needs ${r.need})`;
+            if (r.owner) note(r.owner, line); else failures.push(`text over a canvas: ${line}`);
+          }
+          log(`${tag}: text over canvases: ${measured} of ${n} measured (the others are outside the screen or a clipping window)`);
+        }
+        log(`${tag}: ${overflow ? "sideways scroll" : "ok"}; ${found.clipped.size} cut, ${found.small.size} small, ${found.targets.size} targets`);
+        await ctx.close();
+      }
+    }
+  } finally {
+    await browser.close();
+    if (big) await big.close();
+    server.close();
+  }
+  return { failures, exceptions: EXCEPTIONS, kept, engine };
+}

@@ -1,0 +1,55 @@
+/* Safari's bars: the box the page scrolls in on a Mac (box.js, scroller.js) and the guard of the bottom bar on iPhone.
+   Import it with the site's base styles: @import "site-kit/runtime/safari.css"; (or copy its two blocks).
+
+   ── 1. The box (Safari 26+ on a Mac: scroller.js says why) ──
+   box.js gives <html> the class "boxed"; the box is the element that holds the whole page, right inside <body>
+   ([data-page] here: if a site sets data-box-class / data-box-page on <html>, it writes these two selectors with its
+   own names). The window itself does not scroll, so nothing goes on under Safari's bar and it stays solid.
+     · the body is see-through, so past the ends of the box (where Safari springs back) the root's colours show; the
+       page's own colour is the box's, and it moves with the page ("local");
+     · what the root did for the window, the box does for itself: room for a fixed navbar when the browser scrolls to
+       something (scroll-padding-top), no scroll anchoring;
+     · the box holds the focus at first (box.js), so the keys scroll the page: it is not outlined;
+     · a navbar fixed to the screen must stick to the top of the box instead (position: sticky; top: 0, with a negative
+       bottom margin of its height): the wheel, the trackpad and the keys over something fixed go to the window, which
+       does not scroll, and the page would not move;
+     · a decoration the site draws on body (body::before) has no place there: hide it under html.boxed;
+     · on screens only: printed, the page is the whole page, as everywhere.
+   Tokens: --box-bg (the page's colour; Flow Medium: var(--paper)), --box-pad-top (Flow Medium: var(--nav-h)),
+   --bar-guard-z (above everything fixed but a skip link; Flow Medium: 250).
+
+   ── 2. The bottom bar on iPhone (iOS 26) ──
+   Safari's bottom bar takes a colour from the page: it hit-tests the middle of the bottom edge of the screen (4px up),
+   and when what it finds is inside something fixed or sticky, the bar takes that thing's background colour (WebKit,
+   LocalFrameView::fixedContainerEdges). That hit test looks through clipping and through every block that has nothing
+   fixed or sticky in it, so on Flow Medium it found the stack's sticky cards even under the sections after the stack:
+   the bar turned green under one card and stayed green (Oct 22, 2026).
+   .bar-guard is a small block fixed over that point, above everything, with nothing to show (no background, no backdrop
+   filter, no content): Safari skips it as see-through and then finds nothing fixed or sticky above the page (the walk
+   goes on to its parents, not to what is under it), so the bar keeps no colour of its own: plain glass over the page.
+   It must take taps (pointer-events: auto): a see-through block that does not makes Safari hit-test again without it.
+   64 × 8px, over the bar and the home indicator, where nothing is tapped.
+   Never give it a background or a backdrop filter: a backdrop filter made Safari count the edge as glass of many colours
+   and paint the bar white. Only where that bar is (iPhone, iPad: -webkit-touch-callout).
+   Markup, once per page, early in the page's box: <div class="bar-guard" aria-hidden="true"></div> */
+
+@media screen {
+  html.boxed:has(> body > [data-page]) {
+    height: 100%; overflow: hidden;
+    & body { height: 100%; min-height: 0; overflow: hidden; background: transparent; }
+    & [data-page] {
+      position: fixed; inset: 0; overflow: hidden auto;
+      background: var(--box-bg, Canvas) local;
+      scroll-padding-top: var(--box-pad-top, 0px); overflow-anchor: none;
+      outline: none;
+    }
+  }
+}
+
+.bar-guard { display: none; }
+@supports (-webkit-touch-callout: none) {
+  .bar-guard {
+    display: block; position: fixed; left: calc(50% - 32px); bottom: 0; z-index: var(--bar-guard-z, 250);
+    width: 64px; height: 8px;
+  }
+}
