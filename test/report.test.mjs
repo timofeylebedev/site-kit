@@ -6,6 +6,7 @@ import {
   motionFromCode, mapFromSweep, pictureFromSweep, heightLineOf, typesetRules, whoseState, blockShots,
 } from "../report/parts.mjs";
 import { indexHtml, siteCss } from "../report/build.mjs";
+import { freshFile } from "../shots/index.mjs";
 
 test("nowOnly takes old values and relative dates out of a round's text", () => {
   assert.equal(nowOnly("31 at 390, was 36; 40 at 1440"), "31 at 390; 40 at 1440");
@@ -88,9 +89,21 @@ test("pictures of the blocks: dates and the files that changed since", () => {
   const index = { blocks: { hero: { files: { "a.css": "111", "b.js": "222" }, taken: "2026-11-20T10:00:00Z", commit: "abc", sizes: [{ w: 390, h: 844, file: "shots/hero/390x844.jpg" }] } } };
   const now = { "a.css": "111", "b.js": "999" };
   const got = blockShots([{ id: "hero" }, { id: "footer" }], index, (p) => now[p] || null);
-  assert.deepEqual(got.hero, { taken: "2026-11-20T10:00:00Z", commit: "abc", changed: ["b.js"], sizes: [{ w: 390, h: 844, file: "hero/390x844.jpg" }] });
+  assert.deepEqual(got.hero, { taken: "2026-11-20T10:00:00Z", commit: "abc", changed: ["b.js"], sizes: [{ w: 390, h: 844, file: "hero/390x844.jpg", from: "data" }] });
+  // this run's pictures are taken from the local folder; a kept picture of a size the run missed keeps its own day
+  const two = { blocks: { hero: { ...index.blocks.hero, sizes: [{ w: 390, h: 844, file: "hero/390x844.jpg" }, { w: 1440, h: 900, file: "hero/1440x900.jpg", old: true, taken: "2026-11-01T00:00:00Z" }] } } };
+  const fresh = { blocks: { hero: { sizes: [{ w: 390, h: 844, file: "hero/390x844.jpg" }] } } };
+  assert.deepEqual(blockShots([{ id: "hero" }], two, (p) => now[p], freshFile(fresh)).hero.sizes, [
+    { w: 390, h: 844, file: "hero/390x844.jpg", from: "local" },
+    { w: 1440, h: 900, file: "hero/1440x900.jpg", from: "data", old: true, taken: "2026-11-01T00:00:00Z" }]);
   assert.deepEqual(got.footer, { sizes: [] });
   assert.deepEqual(blockShots([{ id: "hero" }], null, () => null), { hero: { sizes: [] } });
+});
+
+test("whose state: the main branch named by the adapter", () => {
+  assert.equal(whoseState({ local: false, commit: "aaaaaaa1", head: "bbbbbbb2", ref: "trunk", main: "trunk" }).whose, "measured on trunk at aaaaaaa, an earlier commit than this one (bbbbbbb)");
+  assert.match(whoseState({ local: false, commit: "aaaaaaa1", head: "bbbbbbb2", ref: "feature", main: "trunk" }).whose, /before this change \(feature at bbbbbbb\)/);
+  assert.equal(whoseState({ local: false, commit: "a", head: "b" }).from, "the last deploy of main");
 });
 
 test("the page's index.html and site.css take the site's title, accent and fonts", () => {

@@ -3,8 +3,9 @@
 // the answer line. No browser.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { measuredRules, roleAt } from "../checks/measured.mjs";
 import { joinState, codeRules } from "../checks/state.mjs";
 import { sourceRules } from "../checks/source.mjs";
@@ -129,4 +130,105 @@ test("answer: the line the report copies, and the change it makes", () => {
   assert.deepEqual(q.answer, { choice: "yes", note: "", when: "2026-11-23", by: "Owner", hashes: { "a.css": "h1" } });
   assert.equal(applyAnswer(q, "--reopen", "", {}).status, "open"); assert.equal(q.answer, undefined);
   assert.deepEqual(applyAnswer(q, "--drop", "not needed", { today: "2026-11-24" }).dropped, { why: "not needed", when: "2026-11-24" });
+});
+
+// ── the review's fixes ──
+import { isBroken } from "../checks/keep.mjs";
+import { allowedBy, selectorIn } from "../checks/source.mjs";
+import { LESSONS } from "../rules/ids.mjs";
+
+test("a code rule that could not run is an error: its findings are carried, and the next good run finds nothing new", () => {
+  const fails = ["src/scripts/nav.js:80 reads the window's scrollY", "src/scripts/nav.js:95 reads the window's scrollY"];
+  const good = (n) => codeRules([{ id: "learn.window-scroll", area: "Code", title: "t", how: "h", ok: false, n, fails }]);
+  const first = joinState({ rules: good(2), rec: rec() });
+  const [err] = codeRules([{ id: "learn.window-scroll", area: "Code", title: "t", how: "—", ok: false, n: null, fails: [], error: "Unexpected token" }]);
+  assert.equal(err.status, "error");
+  const broken = joinState({ rules: [err], rec: rec(), prev: first });
+  const carried = broken.findings.filter((f) => f.rule === "code.learn.window-scroll");
+  assert.equal(carried.length, 2); assert.ok(carried.every((f) => f.carried && !f.new));
+  assert.equal(broken.fixed.length, 0, "nothing counts as fixed");
+  assert.match(broken.needs[0].title, /^Could not be checked/);
+  const again = joinState({ rules: good(2), rec: rec(), prev: broken });
+  assert.equal(again.findings.filter((f) => f.new).length, 0);
+  assert.equal(again.fixed.length, 0);
+});
+
+test("a second engine's failure: its rules say WebKit could not run; the run is not broken", () => {
+  const wk = rec(); wk.engine = "webkit"; wk.errors = ["sizes: page crashed"];
+  const all = rules();
+  const st = joinState({ rules: all, rec: rec(), webkit: wk, wkRules: measuredRules({ rec: wk, prev: null, scale, palette, cfg }) });
+  const type = ruleOf(st.rules, "type.roles");
+  assert.notEqual(type.status, "error"); assert.equal(type.webkit.status, "error");
+  assert.ok(st.errors.some((e) => e.startsWith("webkit ")));
+  st.engines = { chromium: { errors: [] }, webkit: { errors: wk.errors } };
+  assert.equal(isBroken(st), false);
+  assert.equal(isBroken({ ...st, engines: { chromium: { errors: ["sizes: x"] }, webkit: { errors: [] } } }), true);
+  // a measured rule that could not run (a step that did not run) is broken; a code rule that could not run is not
+  assert.equal(isBroken({ engines: { chromium: { errors: [] } }, rules: [{ id: "type.roles", status: "error" }] }), true);
+  assert.equal(isBroken({ engines: { chromium: { errors: [] } }, rules: [{ id: "code.learn.bare-load", status: "error" }] }), false);
+});
+
+test("decisions: an allowance by file, by CSS rule, or site-wide", () => {
+  const d = [
+    { id: "by-file", rules: [{ rule: "a", files: "legacy\\.css$" }] },
+    { id: "by-selector", rules: [{ rule: "b", files: "\\.css$", selectors: "^\\.card" }] },
+    { id: "everywhere", rules: [{ rule: "c" }] },
+  ];
+  assert.equal(allowedBy(d, "a", "src/legacy.css")?.id, "by-file");
+  assert.equal(allowedBy(d, "a", "src/page.css"), null);
+  assert.equal(allowedBy(d, "b", "src/page.css", ".card:hover")?.id, "by-selector");
+  assert.equal(allowedBy(d, "b", "src/page.css", ".nav"), null);
+  assert.equal(allowedBy(d, "b", "src/page.css", null), null, "a selector allowance needs a CSS rule");
+  assert.equal(allowedBy(d, "c", "src/scripts/x.js")?.id, "everywhere");
+  assert.equal(allowedBy(d, "c", null)?.id, "everywhere");
+  assert.equal(selectorIn([".a {", "  color: red;", "}", ".b { x: 1; }"], 2), ".a");
+  assert.equal(selectorIn([".a {", "}", "", "x"], 4), null);
+});
+
+test("source rules: selectors and site-wide allowances, the decision fields of the adapter, every inline custom property", () => {
+  const site = (more = {}) => ({ name: "Fixture", root: join(FIX, "site"), paths: { dist: "dist", scale: "design/scale.json", decisions: "design/decisions.json", styles: "src/styles", scripts: "src/scripts" },
+    css: { tokens: ["src/styles/base/tokens.css"] }, rules: { learnings: {}, ...more } });
+  const get = (results, id) => results.find((r) => r.id === id);
+  // the kit's default: id, what and why; a site may ask for more, by kind
+  assert.ok(get(sourceRules(site()).results, "decisions").ok);
+  const strict = get(sourceRules(site({ decisionFields: { "*": ["id", "what", "why", "owner"], exception: ["rule", "fix", "until"] } })).results, "decisions");
+  assert.deepEqual(strict.fails, ["old-colour: no owner", "old-colour: an exception without «until»"]);
+  assert.match(strict.how, /id, what, why, owner; the rule and a fix and until for each exception; ids unique/);
+
+  // a site of its own: an allowance by CSS rule and one site-wide, scripts as a list, two custom properties in one style
+  const root = mkdtempSync(join(tmpdir(), "kit-source-"));
+  const put = (f, t) => { mkdirSync(join(root, f, ".."), { recursive: true }); writeFileSync(join(root, f), t); };
+  put("design/scale.json", JSON.stringify(scale));
+  put("design/decisions.json", JSON.stringify({ decisions: [
+    { id: "card-ink", what: "w", why: "y", rules: [{ rule: "colour-tokens", selectors: "^\\.card" }] },
+    { id: "no-fluid", what: "w", why: "y", rules: [{ rule: "fluid-from-scale" }] },
+  ] }));
+  put("src/styles/base/tokens.css", ":root {\n  --ink: #000;\n}\n");
+  put("src/styles/page.css", ".card {\n  color: #111;\n}\n.nav {\n  color: #222;\n  margin: 2vw;\n  top: var(--i);\n  left: var(--turn);\n  right: var(--set);\n  color: var(--ink);\n}\n");
+  put("src/index.html", '<!doctype html><html><body><div style="--i: 1; --turn: 2">x</div></body></html>');
+  put("src/scripts/a.js", "");
+  put("public/vt.js", 'el.style.setProperty("--set", 1);');
+  const own = { name: "Own", root, paths: { dist: "dist", scale: "design/scale.json", decisions: "design/decisions.json", styles: "src/styles", scripts: ["src/scripts", "public/vt.js"] },
+    css: { tokens: ["src/styles/base/tokens.css"] }, rules: { learnings: {} } };
+  const res = sourceRules(own).results;
+  assert.deepEqual(get(res, "colour-tokens").fails, ["src/styles/page.css:5 #222"]);
+  assert.deepEqual(get(res, "colour-tokens").allowed, ["src/styles/page.css:2 #111 (card-ink)"]);
+  assert.deepEqual(get(res, "fluid-from-scale").fails, []);
+  assert.deepEqual(get(res, "tokens-wired").fails, [], "--turn (second in its style) and --set (in public/vt.js) are defined");
+  // without a scroll module the window's scroll is not checked (rules/README.md)
+  put("src/scripts/a.js", "const y = window.scrollY;");
+  const ws = get(sourceRules(own).results, "learn.window-scroll");
+  assert.deepEqual(ws.fails, []); assert.match(ws.note, /no scroll module/);
+});
+
+test("the lessons' ids (rules/ids.mjs) are the rules learningRules returns, in order; a rule that throws could not run", async () => {
+  const { learningRules } = await import("../rules/learnings.mjs");
+  const ctx = { cfg: { paths: {}, rules: { learnings: { scrollModule: "s/scroller.js" } } }, js: {}, css: {}, html: {} };
+  const got = learningRules(ctx);
+  assert.deepEqual(got.map((r) => [r.id, r.title]), LESSONS.map((l) => [l.id, l.title]));
+  // a script that is not text breaks every rule that reads scripts: each comes back as could-not-run, none vanishes
+  const bad = learningRules({ ...ctx, js: { "s/x.js": null } });
+  assert.equal(bad.length, LESSONS.length);
+  assert.ok(bad.some((r) => r.error));
+  assert.ok(bad.filter((r) => r.error).every((r) => LESSONS.some((l) => l.id === r.id) && r.fails.length === 0));
 });

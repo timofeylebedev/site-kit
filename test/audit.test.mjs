@@ -24,7 +24,7 @@ test("serve: index, x → x.html, a folder's index, 404.html with 404", async ()
   writeFileSync(join(dist, "privacy.html"), "privacy");
   writeFileSync(join(dist, "404.html"), "lost");
   mkdirSync(join(dist, "docs")); writeFileSync(join(dist, "docs", "index.html"), "docs");
-  const { server, url } = await serve(dist);
+  const { close, url } = await serve(dist);
   try {
     const get = async (p) => { const r = await fetch(url + p); return [r.status, await r.text()]; };
     assert.deepEqual(await get(""), [200, "home"]);
@@ -32,5 +32,5 @@ test("serve: index, x → x.html, a folder's index, 404.html with 404", async ()
     assert.deepEqual(await get("docs"), [200, "docs"]);
     assert.deepEqual(await get("no-such-page"), [404, "lost"]);
     assert.equal((await get("missing.png"))[0], 404);
-  } finally { server.close(); }
+  } finally { await close(); }
 });

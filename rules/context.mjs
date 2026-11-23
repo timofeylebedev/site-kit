@@ -4,9 +4,13 @@ import { siteIO } from "../lib/config.mjs";
 import { dirname } from "node:path";
 import { scanJs, stripCss } from "./learnings.mjs";
 
+// a decision's allowance (checks/source.mjs allowedBy, kept here too so this works without it)
+const allowedBy = (decisions, id, file, selector = null) => decisions.find((d) => (d.rules || []).some((r) => r.rule === id &&
+  (!r.files || new RegExp(r.files).test(file || "")) && (!r.selectors || (selector != null && new RegExp(r.selectors).test(selector))))) || null;
+
 export function minimalContext(cfg, io = siteIO(cfg)) {
   const styles = cfg.paths?.styles || "src/styles", scripts = cfg.paths?.scripts || "src/scripts";
-  const pages = cfg.paths?.pages || dirname(styles);
+  const pages = cfg.paths?.pages || dirname([].concat(styles)[0]);
   const load = (files) => Object.fromEntries(files.map((f) => [f, io.read(f)]));
   const decisions = io.json(cfg.paths?.decisions || "design/decisions.json", { decisions: [] }).decisions || [];
   return {
@@ -19,6 +23,6 @@ export function minimalContext(cfg, io = siteIO(cfg)) {
     strip: stripCss,
     stripJs: (s) => scanJs(s).text,
     lineOf: (s, i) => s.slice(0, i).split("\n").length,
-    allowed: (id, file) => decisions.find((d) => (d.rules || []).some((r) => r.rule === id && (!r.files || new RegExp(r.files).test(file)))) || null,
+    allowed: (id, file, selector) => allowedBy(decisions, id, file, selector),
   };
 }

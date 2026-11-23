@@ -12,14 +12,15 @@ export async function all(cfg) {
   // checks/source.mjs not there: the lessons alone (and the site's own rules, on the same context)
   const ctx = minimalContext(cfg);
   const rules = [...learningRules(ctx), ...(typeof cfg.rules?.code === "function" ? cfg.rules.code(ctx) : [])];
-  return { results: rules.map((r) => ({ ...r, ok: r.fails.length === 0, n: r.fails.length })), from: "rules/learnings.mjs only" };
+  return { results: rules.map((r) => ({ ...r, ok: !r.error && r.fails.length === 0, n: r.error ? null : r.fails.length })), from: "rules/learnings.mjs only" };
 }
 
 export async function run(args, cfg) {
-  const opt = options(args);
+  const opt = options(args, ["json"]);
   const out = { when: new Date().toISOString(), ...(await all(cfg)) };
   if (typeof opt("json") === "string") writeFileSync(opt("json"), JSON.stringify(out, null, 1));
   for (const r of out.results) {
+    if (r.error) { console.log(`ERR  ${r.id}: ${r.title}: could not run (${r.error})`); continue; }
     console.log(`${r.ok ? "ok  " : "FAIL"} ${r.id}: ${r.title} (${r.n})${r.note ? ` · ${r.note}` : ""}`);
     for (const x of r.fails.slice(0, 40)) console.log("       " + x);
     if (r.fails.length > 40) console.log(`       … and ${r.fails.length - 40} more`);

@@ -20,13 +20,13 @@
 // They have no phone emulation of Chromium's kind (Firefox none at all), so there the phone sizes are plain windows of
 // that size. The bigger text is set in Chromium through DevTools and in Firefox through its settings; WebKit leaves
 // those sizes out. Headless Chromium without a GPU draws WebGL with SwiftShader (the launch flags below).
-import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { siteIO } from "../lib/config.mjs";
+import { serve } from "../lib/serve.mjs";
 
 // the nine sizes Flow Medium settled on: a small and a common phone, a tablet both ways, a phone turned sideways, a short
 // laptop, a big screen; and the browser's text made bigger (Settings → Appearance → Font size: "Very large" is 24px):
@@ -55,28 +55,8 @@ export function settings(cfg) {
   };
 }
 
-// ── a tiny static server for the built site, as GitHub Pages serves it (a folder's index.html, "x" → x.html, 404.html) ──
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
-  ".webp": "image/webp", ".avif": "image/avif", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
-  ".woff2": "font/woff2", ".woff": "font/woff", ".json": "application/json", ".webmanifest": "application/manifest+json",
-  ".ico": "image/x-icon", ".mp4": "video/mp4", ".webm": "video/webm", ".txt": "text/plain", ".xml": "application/xml" };
-export function serve(dist) {
-  const isFile = async (f) => { try { return (await stat(f)).isFile(); } catch { return false; } };
-  const server = createServer(async (req, res) => {
-    const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    let file = join(dist, path.endsWith("/") ? path + "index.html" : path), status = 200;
-    if (!(await isFile(file))) {
-      if (await isFile(file + ".html")) file += ".html";
-      else if (await isFile(join(file, "index.html"))) file = join(file, "index.html");
-      else if (!extname(path) && (await isFile(join(dist, "404.html")))) { file = join(dist, "404.html"); status = 404; }
-      else { res.writeHead(404); res.end(); return; }
-    }
-    const body = await readFile(file);
-    res.writeHead(status, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
-    res.end(body);
-  }).listen(0);
-  return new Promise((done) => server.on("listening", () => done({ server, url: `http://localhost:${server.address().port}/` })));
-}
+// the built site as GitHub Pages serves it: the kit's one server (lib/serve.mjs), also exported from here
+export { serve };
 
 // ── what is measured in the page ──
 function measure({ skip, skipSmall, skipTargets }) {
@@ -255,7 +235,7 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
   } finally {
     await browser.close();
     if (big) await big.close();
-    server.close();
+    await server.close();
   }
   return { failures, exceptions: EXCEPTIONS, kept, engine };
 }

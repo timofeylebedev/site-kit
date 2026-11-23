@@ -1,6 +1,6 @@
 // The browser part of `site-kit shots`: one page load per page and size, then a JPEG of each block.
 // The page is loaded as the checks load it, so the pictures show what was measured:
-//   - the built site served as GitHub Pages serves it (serve.mjs), with `cfg.checks.query` added to the address
+//   - the built site served as GitHub Pages serves it (lib/serve.mjs), with `cfg.checks.query` added to the address
 //   - `cfg.checks.unstyle` rewrites applied to the served documents and stylesheets (a site's stylesheet may be inline)
 //   - other hosts answered with nothing (204): nothing leaves the machine, no analytics, no third-party frames
 //   - reduced motion: reveals and entrances settle at once, a moving block is caught at rest

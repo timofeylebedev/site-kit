@@ -9,6 +9,7 @@
 // and cannot be found says so in its note and fails nothing. A site turns a rule off for a file only with a decision
 // whose `rules` field names it: "rules": [{ "rule": "learn.window-scroll", "files": "src/scripts/debug\\.js" }].
 import { dirname, join, normalize, basename } from "node:path";
+import { LESSONS, couldNotRun } from "./ids.mjs";
 
 const AREA = "Code";
 
@@ -115,8 +116,8 @@ function rule(ctx, id, title, how, found, note = "") {
   const key = (f) => { const [, file, line] = f.match(/^([^:]*):(\d+)/) || [, f, 0]; return [file, +line]; };
   found = [...new Set(found)].sort((x, y) => { const [a, i] = key(x), [b, j] = key(y); return a < b ? -1 : a > b ? 1 : i - j; });
   for (const f of found) {
-    const file = f.split(":")[0];
-    const d = ctx.allowed?.(id, file);
+    const [file, line] = key(f);
+    const d = ctx.allowed?.(id, file, ctx.selectorAt?.(file, line) ?? null);
     if (d) kept.set(d.id, (kept.get(d.id) || 0) + 1);
     else fails.push(f);
   }
@@ -139,6 +140,9 @@ const inCode = (code, text, re) => [...text.matchAll(re)].filter((m) => code[m.i
 
 // ── 1. the scroll goes through one module ──
 function windowScroll(ctx, P) {
+  const title = "The scroll goes through one module";
+  // without a scroll module there is nothing to go through: the rule says so and fails nothing (rules/README.md)
+  if (!P.scroll.length) return rule(ctx, "learn.window-scroll", title, "—", [], "no scroll module set or found (rules.learnings.scrollModule): nothing to check");
   const found = [];
   const reads = new RegExp(String.raw`(?<![\w$.])(?:${WINDOW}\s*\.\s*)?(scrollY|scrollX|pageYOffset|pageXOffset)\b`, "g");
   const rootTop = /\bdocument\s*\.\s*(?:documentElement|scrollingElement|body)\s*\.\s*scrollTop\b/g;
@@ -165,11 +169,9 @@ function windowScroll(ctx, P) {
       at(m, `scrolls the window (${name})`);
     }
   }
-  const where = P.scroll.length ? P.scroll.join(", ") : null;
-  return rule(ctx, "learn.window-scroll", "The scroll goes through one module",
-    "No script reads window.scrollY / scrollX / pageYOffset or the root's scrollTop, listens to the window's (or document's) scroll, or scrolls the window, outside the scroll module" +
-    (where ? ` (${where})` : "") + ". In Safari on a Mac the page may scroll in its own box (runtime/scroller.js): the window's scroll then never changes. Ask the module: y(), to(), onScroll().",
-    found, where ? "" : "no scroll module set or found (rules.learnings.scrollModule): every window scroll counts");
+  return rule(ctx, "learn.window-scroll", title,
+    `No script reads window.scrollY / scrollX / pageYOffset or the root's scrollTop, listens to the window's (or document's) scroll, or scrolls the window, outside the scroll module (${P.scroll.join(", ")}). In Safari on a Mac the page may scroll in its own box (runtime/scroller.js): the window's scroll then never changes. Ask the module: y(), to(), onScroll().`,
+    found);
 }
 
 // ── 2. an IntersectionObserver that looks ahead watches from the scroller ──
@@ -400,8 +402,12 @@ function boxEveryPage(ctx, P) {
   return rule(ctx, id, title, how, found, `${pages} pages with the box`);
 }
 
-/** The lessons as rules, in order. */
+/** The lessons as rules, in order (rules/ids.mjs lists them). A rule that throws is returned as one that could not
+ *  run (`error`), never left out: its findings must not count as fixed. */
 export function learningRules(ctx) {
   const P = parts(ctx);
-  return [windowScroll, ioRoot, webglCaveat, bareLoad, stylesFirst, consentFirst, lazyMedia, barGuard, boxEveryPage].map((r) => r(ctx, P));
+  return [windowScroll, ioRoot, webglCaveat, bareLoad, stylesFirst, consentFirst, lazyMedia, barGuard, boxEveryPage].map((r, i) => {
+    try { return r(ctx, P); }
+    catch (e) { return couldNotRun(LESSONS[i], String(e.message || e).split("\n")[0]); }
+  });
 }

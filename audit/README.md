@@ -2,11 +2,12 @@
 
 ```sh
 site-kit audit                       # Chromium (PLAYWRIGHT_CHROMIUM names its binary, else Playwright's own)
-site-kit audit --engine webkit       # or SITE_KIT_ENGINE=webkit (FM_ENGINE still works)
+site-kit audit --engine webkit       # or SITE_KIT_ENGINE=webkit (lib/env.mjs; FM_ENGINE still works in v0.1)
 ```
 
-Run after the site's build, in its root. It serves `paths.dist` as GitHub Pages does (a folder's `index.html`,
-`x` → `x.html`, `404.html` with status 404), opens each page at each size, scrolls it through once (so every block has
+Run after the site's build, in its root. It serves `paths.dist` as GitHub Pages does (`lib/serve.mjs`, the same server
+as the checks and the pictures: a folder's `index.html`, a folder without its slash → 301, `x` → `x.html`, `404.html`
+with status 404 for anything missing; 127.0.0.1 only, never a file outside dist), opens each page at each size, scrolls it through once (so every block has
 come in and every pinned part has moved), then looks at every section on screen. It fails (exit 1) on:
 
 - **sideways scroll**: the page wider than the screen at any point of the scroll;

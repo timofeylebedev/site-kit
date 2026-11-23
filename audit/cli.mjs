@@ -1,12 +1,12 @@
 // site-kit audit [--engine chromium|firefox|webkit]: the built pages in a real browser (audit.mjs says what fails).
-// The engine: --engine, else SITE_KIT_ENGINE, else FM_ENGINE (Flow Medium's old name), else chromium.
+// The engine: --engine, else SITE_KIT_ENGINE (lib/env.mjs), else chromium.
 // Exit 1 when a problem is found, 2 when it cannot run (no build, an unknown engine).
-import { options } from "../lib/config.mjs";
+import { options, env } from "../lib/config.mjs";
 import { audit } from "./audit.mjs";
 
 export async function run(args, cfg) {
-  const opt = options(args);
-  const engine = (typeof opt("engine") === "string" && opt("engine")) || process.env.SITE_KIT_ENGINE || process.env.FM_ENGINE || "chromium";
+  const opt = options(args, ["engine"]);
+  const engine = (typeof opt("engine") === "string" && opt("engine")) || env("ENGINE") || "chromium";
   let r;
   try { r = await audit(cfg, { engine }); }
   catch (e) { if (e.code === "NO_DIST" || e.code === "BAD_ENGINE") { console.error(e.message); return 2; } throw e; }

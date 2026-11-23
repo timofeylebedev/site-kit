@@ -34,7 +34,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/*.test.mjs"
   },
   "peerDependencies": {
     "axe-core": "^4.10.0",

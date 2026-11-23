@@ -11,7 +11,8 @@
 #     (The first run creates gh-pages; pick it then.)
 #   - Settings → Actions → General → Workflow permissions: "Read and write permissions" (the jobs push to gh-pages and
 #     report-data and comment on pull requests; the permissions below ask for exactly that).
-#   - Issues → Labels: add `checks` and `shots` (any colour).
+#   - Issues → Labels: add `checks` and `shots` (any colour). To name them otherwise, change them in all three places
+#     below: the concurrency group, the job `site`'s `if`, and the inputs checks-label / shots-label of the job `checks`.
 #   - The site's package.json has "site-kit": "github:timofeylebedev/site-kit#v0.1.0" in devDependencies, and its
 #     adapter site-kit.config.mjs (checks.designPaths decides which pull requests are measured).
 #   - Raise the kit's tag here and in package.json together.
@@ -50,6 +51,7 @@ jobs:
     #   node-version: "22"
     #   build: npm run build
     #   check: npm run check
+    #   rules-strict: true    # a failing code rule (site-kit rules) stops the deploy; off by default
 
   checks:
     needs: site
@@ -59,4 +61,6 @@ jobs:
     uses: timofeylebedev/site-kit/.github/workflows/checks.yml@v0.1.0
     with:
       shots: ${{ inputs.shots || '' }}
+      checks-label: checks  # the same names as in the concurrency group and the `if` above
+      shots-label: shots
       # engines: chromium webkit:quick

@@ -35,7 +35,8 @@ const sameColour = (a, b) => a.slice(0, 3).every((x, i) => Math.abs(x - b[i]) <=
 // size, which is min(width, what its height allows); `by: "width"` follows the width alone; `per` follows a block
 export function roleAt(scale, role, w, h) {
   const R = scale.range, H = R.height;
-  const vp = role.by === "width" ? w : Math.min(w, R.from + (h - H.from) * (R.to - R.from) / (H.to - H.from));
+  // a scale without range.height does not follow the screen's height: the width alone
+  const vp = role.by === "width" || !H ? w : Math.min(w, R.from + (h - H.from) * (R.to - R.from) / (H.to - H.from));
   const k = Math.max(0, Math.min(1, (vp - R.from) / (R.to - R.from)));
   return role.px[0] + (role.px[1] - role.px[0]) * k;
 }
@@ -105,7 +106,7 @@ export function measuredRules({ rec, prev, scale, palette: colours = [], cfg = {
 
   // ── Shape ─────────────────────────────────────────────────────────────────────────────────────────────────────
   {
-    const radiusRoles = Object.entries(scale.space.roles).filter(([n]) => n.startsWith("radius/"));
+    const radiusRoles = Object.entries(scale.space?.roles || {}).filter(([n]) => n.startsWith("radius/"));
     const objects = cfg.objectRadii || [];
     let on = 0, all = 0; const items = [];
     for (const k of sizes) {

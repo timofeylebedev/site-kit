@@ -34,11 +34,13 @@ export function rendererOf(gl) {
 /** True when this context is drawn in software. */
 export const isSoftware = (gl) => SOFTWARE.test(rendererOf(gl));
 
-/** A WebGL context on a real GPU, or null (no WebGL of that kind, or drawn in software). `force` skips both tests. */
+/** A WebGL context on a real GPU, or null (no WebGL of that kind, or drawn in software). `force` skips both tests.
+ *  A software context it turns down is let go at once (browsers keep only so many contexts; an abandoned one holds
+ *  its memory until it is collected, and pushes out an older, wanted one first). */
 export function gpuContext(canvas, kind = "webgl2", attrs = {}, { force = false } = {}) {
   const gl = canvas.getContext(kind, { ...attrs, failIfMajorPerformanceCaveat: !force });
   if (!gl) return null;
-  if (!force && isSoftware(gl)) return null;
+  if (!force && isSoftware(gl)) { gl.getExtension("WEBGL_lose_context")?.loseContext(); return null; }
   return gl;
 }
 

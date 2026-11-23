@@ -9,31 +9,33 @@
 //   shots/                      the pictures of the blocks (site-kit shots): <block>/<w>x<h>.jpg and index.json
 // site-kit checks keep [--pr <n>]      (CI, after the checks; it needs push rights to the repository)
 // site-kit checks keep --forget <n>    a closed pull request: its pr/<n>/ is removed
-// latest/, history/ and shots/ are written only from main (GITHUB_REF refs/heads/main), and latest/ and history/ never
-// from a run whose measuring failed: a broken run must not become the baseline the next ones are compared with.
+// latest/, history/ and shots/ are written only from main (GITHUB_REF refs/heads/<cfg.mainBranch>: SITE_KIT_MAIN, the
+// workflows' main-branch), and latest/ and history/ never from a run whose measuring failed: a broken run must not
+// become the baseline the next ones are compared with. Only the first engine counts for that (Chromium in CI): a second
+// engine that fails (WebKit) only marks its own results as not measured.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, cpSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { siteIO, options } from "../lib/config.mjs";
+import { siteIO, options, mainBranch, dataBranch } from "../lib/config.mjs";
 import { mergeShots } from "../shots/index.mjs";
 
 export async function keep(cfg, args = []) {
-  const io = siteIO(cfg), opt = options(args), ROOT = io.root;
+  const io = siteIO(cfg), opt = options(args, ["pr", "forget"]), ROOT = io.root;
   const OUT = io.abs(cfg.paths.out);
-  const BRANCH = cfg.checks?.dataBranch || "report-data";
+  const BRANCH = dataBranch(cfg);
   const pr = typeof opt("pr") === "string" ? opt("pr") : null;
   const forget = typeof opt("forget") === "string" ? opt("forget") : null;
   // the bot's name on the commits (and on a rebase when another run pushed first)
   Object.assign(process.env, { GIT_AUTHOR_NAME: "github-actions[bot]", GIT_AUTHOR_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com", GIT_COMMITTER_NAME: "github-actions[bot]", GIT_COMMITTER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com" });
   const ref = process.env.GITHUB_REF || "";
-  const onMain = ref === "refs/heads/main";
+  const onMain = ref === `refs/heads/${mainBranch(cfg)}`;
   const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   if (!forget && !existsSync(join(OUT, "state.json"))) { console.error(`keep: no ${io.rel(join(OUT, "state.json"))} — run \`site-kit checks\` first`); return 2; }
   const state = forget ? null : JSON.parse(readFileSync(join(OUT, "state.json"), "utf8"));
   const sha = state ? (state.commit || "unknown").slice(0, 7) : "", day = state ? (state.generated || new Date().toISOString()).slice(0, 10) : "";
-  const broken = state && ((state.errors || []).length || state.summary?.errors);
+  const broken = state && isBroken(state);
   const shotsIndex = join(OUT, "shots", "index.json");
 
   const dir = mkdtempSync(join(tmpdir(), "report-data-"));
@@ -84,10 +86,14 @@ export async function keep(cfg, args = []) {
       const ids = (cfg.report?.blocks || []).map((b) => b.id);
       const index = mergeShots(kept, fresh, ids.length ? ids : null);
       for (const id of Object.keys(kept?.blocks || {})) if (!index.blocks[id]) rmSync(join(dir, "shots", id), { recursive: true, force: true });
-      const took = Object.keys(fresh.blocks || {}).filter((id) => index.blocks[id]);
+      // a block this run took: its folder holds exactly its merged entry's pictures (this run's, and kept ones of sizes
+      // it could not take); a block it took none of (no entry, or an empty one from an older run) is left as it was
+      const took = Object.keys(fresh.blocks || {}).filter((id) => index.blocks[id] && (fresh.blocks[id].sizes || []).length);
       for (const id of took) {
-        rmSync(join(dir, "shots", id), { recursive: true, force: true });
-        if (existsSync(join(OUT, "shots", id))) cpSync(join(OUT, "shots", id), join(dir, "shots", id), { recursive: true });
+        const want = new Set(index.blocks[id].sizes.map((s) => s.file));
+        const folder = join(dir, "shots", id);
+        if (existsSync(folder)) for (const f of readdirSync(folder)) if (!want.has(`${id}/${f}`)) rmSync(join(folder, f), { recursive: true, force: true });
+        if (existsSync(join(OUT, "shots", id))) cpSync(join(OUT, "shots", id), folder, { recursive: true });
       }
       mkdirSync(join(dir, "shots"), { recursive: true });
       writeFileSync(keptFile, JSON.stringify(index, null, 1));
@@ -96,7 +102,7 @@ export async function keep(cfg, args = []) {
     git(dir, "add", "-A");
     try { git(dir, "diff", "--cached", "--quiet"); console.log("keep: nothing new"); }
     catch {
-      git(dir, "commit", "--quiet", "-m", forget ? `Forget PR #${forget} (closed)` : `Checks of ${sha} (${pr ? "PR #" + pr : onMain ? "main" : ref || "local"})`);
+      git(dir, "commit", "--quiet", "-m", forget ? `Forget PR #${forget} (closed)` : `Checks of ${sha} (${pr ? "PR #" + pr : onMain ? mainBranch(cfg) : ref || "local"})`);
       // other runs push too (pull requests, a merge): fetch, put this commit on top, try again
       for (let i = 0; ; i++) {
         try { git(dir, "push", "origin", `HEAD:refs/heads/${BRANCH}`); break; }
@@ -113,4 +119,12 @@ export async function keep(cfg, args = []) {
     rmSync(dir, { recursive: true, force: true });
   }
   return 0;
+}
+
+/** a run whose measuring failed: an error of the first engine's record, or a measured rule that could not run. The
+ *  second engine's errors (prefixed with its name in state.errors) and code rules that could not run do not count. */
+export function isBroken(state) {
+  const first = Object.values(state.engines || {})[0];
+  const errors = first ? first.errors || [] : state.errors || [];
+  return errors.length > 0 || (state.rules || []).some((r) => r.status === "error" && !String(r.id).startsWith("code."));
 }

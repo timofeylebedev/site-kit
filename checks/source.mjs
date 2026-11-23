@@ -6,8 +6,10 @@
 // sourceRules(cfg) → { results: [{ id, area, title, how, ok, n, fails, note }], relations, steps, customMedia, ladder }
 // One context, then in order: the kit's generic design rules (below), the lessons (rules/learnings.mjs:
 // learningRules(ctx)) and the site's own (cfg.rules.code(ctx)). A rule there is { id, area, title, how, fails, note? }.
-// A fail in a file that a decision allows for that rule ("rules": [{ "rule": "<id>", "files": "<regex>" }]) is left
-// out, and listed under `allowed`.
+// A fail that a decision allows for that rule is left out, and listed under `allowed`:
+//   "rules": [{ "rule": "<id>", "files": "<regex>", "selectors": "<regex>" }]
+// files: the fail's file (omitted: every file, the rule is allowed site-wide); selectors: the CSS rule the fail is in
+// (only fails in a stylesheet have one; omitted: any).
 //
 // What the generic rules read from the adapter (all optional, a rule whose input is missing is not run):
 //   css.tokens        the stylesheets where tokens are defined (the generated one first): token definitions may hold
@@ -20,14 +22,20 @@
 //   rules.steps       { shared: ["22rem", …], own: [...] | (io) => [...] }: the layout steps container queries may use
 //   rules.curves      { modules: ["src/scripts/motion.js"], tokens: "--ease" }: the one table of curves
 //   rules.notes       { "<rule id>": "a note shown with the rule" }
+//   rules.decisionFields  what every decision must have, and what each kind must have besides:
+//                     ["id", "what", "why"] (the default), or { "*": [...], exception: ["rule", "fix"] }
 import { dirname } from "node:path";
 import { siteIO } from "../lib/config.mjs";
 
-// the lessons are another part of the kit: carry on without them when they are missing or broken (said once)
-let learnings = null, learnWhy = null;
+// the lessons are another part of the kit. When they cannot be loaded or throw, each of them is still a rule, one that
+// could not run (status "error": its last findings are carried, rules/ids.mjs), never left out: their findings would
+// count as fixed and come back as «new» on the next good run. Said once.
+let learnings = null, learnWhy = null, lessons = [];
 try { learnings = await import("../rules/learnings.mjs"); } catch (e) { learnWhy = String(e.message || e).split("\n")[0]; }
+try { ({ LESSONS: lessons } = await import("../rules/ids.mjs")); } catch {}
 let warned = false;
-const warnOnce = (why) => { if (!warned) console.warn(`site-kit: the lessons (rules/learnings.mjs) were not run: ${why}`); warned = true; };
+const warnOnce = (why) => { if (!warned) console.warn(`site-kit: the lessons (rules/learnings.mjs) could not run: ${why}`); warned = true; };
+const notRun = (why) => lessons.map((l) => ({ id: l.id, area: "Code", title: l.title, how: "—", fails: [], error: why }));
 
 const AREA = { ladder: "Type", relations: "Type", "no-swallowed-css": "Code", "colour-tokens": "Colour", "type-from-scale": "Type", "fluid-from-scale": "Space", "tokens-wired": "Code", "layout-steps": "Layout", "media-steps": "Layout", curves: "Motion", decisions: "Decisions" };
 
@@ -36,6 +44,24 @@ export const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\
 export const stripJs = (t) => t.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p) => p + " ".repeat(m.length - p.length));
 export const lineOf = (s, i) => s.slice(0, i).split("\n").length;
 
+/** the selector of the CSS rule a line of a stylesheet is in (the nearest `selector {` above it), or null */
+export function selectorIn(lines, line) {
+  for (let i = Math.min(line, lines.length) - 1; i >= 0; i--) {
+    const m = lines[i].match(/^\s*([^{}/@][^{}]*?)\s*\{/);
+    if (m) return m[1].trim().slice(0, 60);
+    if (/^\s*\}/.test(lines[i]) && i < line - 1) return null;
+  }
+  return null;
+}
+
+/** the decision that allows a rule here, or null: an entry of its `rules` with this rule, whose `files` (omitted: any)
+ *  matches the file and whose `selectors` (omitted: any) matches the CSS rule the place is in */
+export function allowedBy(decisions, ruleId, file, selector = null) {
+  return decisions.find((d) => (d.rules || []).some((r) => r.rule === ruleId &&
+    (!r.files || new RegExp(r.files).test(file || "")) &&
+    (!r.selectors || (selector != null && new RegExp(r.selectors).test(selector))))) || null;
+}
+
 /** the context every code rule gets (SPEC.md «Code rules: one shape») */
 export function context(cfg) {
   const io = siteIO(cfg);
@@ -43,12 +69,19 @@ export function context(cfg) {
   const read = (files) => Object.fromEntries(files.map((f) => [f, io.read(f)]));
   const css = read(io.files(P.styles, ".css"));
   const js = read(io.files(P.scripts, [".js", ".mjs"]));
-  const pages = P.pages ?? dirname(P.styles);
+  // the page sources: paths.pages, else the folder above the (first) styles folder
+  const pages = P.pages ?? dirname([].concat(P.styles)[0]);
   const html = read(io.files(pages, ".html").filter((f) => !f.startsWith(P.dist + "/")));
   const scale = io.json(P.scale, null);
   const decisions = io.json(P.decisions, { decisions: [] }).decisions || [];
-  const allowed = (ruleId, file) => decisions.find((d) => (d.rules || []).some((r) => r.rule === ruleId && (!r.files || new RegExp(r.files).test(file)))) || null;
-  return { cfg, io, css, js, html, scale, decisions, strip, stripJs, lineOf, allowed };
+  const lines = new Map();
+  const selectorAt = (file, line) => {
+    if (!/\.css$/.test(file || "")) return null;
+    if (!lines.has(file)) lines.set(file, (css[file] ?? (io.exists(file) ? io.read(file) : "")).split("\n"));
+    return selectorIn(lines.get(file), line);
+  };
+  const allowed = (ruleId, file, selector = null) => allowedBy(decisions, ruleId, file, selector);
+  return { cfg, io, css, js, html, scale, decisions, strip, stripJs, lineOf, allowed, selectorAt };
 }
 
 export function sourceRules(cfg) {
@@ -149,7 +182,8 @@ export function sourceRules(cfg) {
     for (const m of js.matchAll(/["'`](--[\w-]+)["'`]|setProperty\(\s*["'`](--[\w-]+)/g)) defined.add(m[1] || m[2]);
     // set inside an inline style written by a script ('…;--i:' + i, `--turn:${x}`)
     for (const m of js.matchAll(/["'`;\s](--[\w-]+)\s*:/g)) defined.add(m[1]);
-    for (const m of html.matchAll(/style="[^"]*?(--[\w-]+)\s*:/g)) defined.add(m[1]);
+    // every custom property an inline style sets (style="--i: 1; --turn: 2"), not only the first
+    for (const m of html.matchAll(/style="([^"]*)"/g)) for (const d of m[1].matchAll(/(--[\w-]+)\s*:/g)) defined.add(d[1]);
     for (const [f, s] of pageCss) for (const m of s.matchAll(/var\(\s*(--[\w-]+)\s*([,)])/g)) {
       if (!used.has(m[1])) used.set(m[1], []);
       used.get(m[1]).push({ f, fallback: m[2] === "," });
@@ -220,33 +254,41 @@ export function sourceRules(cfg) {
     rule("curves", `Curves from one table (${[...modules].map((m) => m.split("/").pop()).join(", ") || "the curve tokens"})`, `cubic-bezier() and named eases in the page's stylesheets and scripts, outside ${[...modules].join(", ") || "the curve module"} and the ${prefix} tokens`, curves);
   }
 
-  // 11. decisions complete
+  // 11. decisions complete: the fields every decision must have, and those of each kind (rules.decisionFields)
   {
-    const need = ["id", "kind", "what", "decided", "why"], incomplete = [];
+    const F = R.decisionFields || ["id", "what", "why"];
+    const need = Array.isArray(F) ? F : F["*"] || [], byKind = Array.isArray(F) ? {} : Object.fromEntries(Object.entries(F).filter(([k]) => k !== "*"));
+    const missingOf = (kind, k) => kind === "exception" && k === "rule" ? "an exception without the rule it departs from"
+      : kind === "exception" && k === "fix" ? "an exception without a fix" : `${/^[aeiou]/i.test(kind) ? "an" : "a"} ${kind} without «${k}»`;
+    const word = (k) => ({ rule: "the rule", fix: "a fix" }[k] || k);
+    const incomplete = [];
     for (const d of decisions) {
       for (const k of need) if (!d[k]) incomplete.push(`${d.id || "?"}: no ${k}`);
-      if (d.kind === "exception" && !d.rule) incomplete.push(`${d.id}: an exception without the rule it departs from`);
-      if (d.kind === "exception" && !d.fix) incomplete.push(`${d.id}: an exception without a fix`);
+      for (const [kind, fields] of Object.entries(byKind)) if (d.kind === kind) for (const k of fields) if (!d[k]) incomplete.push(`${d.id}: ${missingOf(kind, k)}`);
       for (const r of d.rules || []) if (!r.rule) incomplete.push(`${d.id}: an entry of «rules» without the rule it allows`);
     }
     const ids = decisions.map((d) => d.id), dup = ids.filter((x, i) => ids.indexOf(x) !== i);
-    rule("decisions", "Every decision complete", `${decisions.length} entries: ${need.join(", ")}; the rule and a fix for each exception; ids unique`, [...incomplete, ...dup.map((d) => "duplicate id " + d)]);
+    const kinds = Object.entries(byKind).map(([kind, fields]) => `; ${fields.map(word).join(" and ")} for each ${kind}`).join("");
+    rule("decisions", "Every decision complete", `${decisions.length} entries: ${need.join(", ")}${kinds}; ids unique`, [...incomplete, ...dup.map((d) => "duplicate id " + d)]);
   }
 
   // the lessons, then the site's own
   const more = [];
+  const failed = (why) => { warnOnce(why); more.push(...notRun(why)); };
   if (learnings?.learningRules) {
-    try { const got = learnings.learningRules(ctx); if (Array.isArray(got)) more.push(...got); else warnOnce("learningRules(ctx) did not return a list"); }
-    catch (e) { warnOnce(String(e.message || e).split("\n")[0]); }
-  } else warnOnce(learnWhy || "no learningRules() in it");
+    try { const got = learnings.learningRules(ctx); if (Array.isArray(got)) more.push(...got); else failed("learningRules(ctx) did not return a list"); }
+    catch (e) { failed(String(e.message || e).split("\n")[0]); }
+  } else failed(learnWhy || "no learningRules() in it");
   if (typeof R.code === "function") more.push(...(R.code(ctx) || []));
-  for (const r of more) results.push({ id: r.id, area: r.area, title: r.title, how: r.how, fails: r.fails || [], note: r.note || notes[r.id] || "" });
+  for (const r of more) results.push({ id: r.id, area: r.area, title: r.title, how: r.how, fails: r.fails || [], note: r.note || notes[r.id] || "", ...(r.error ? { error: r.error } : {}) });
 
-  // a decision may allow a rule in some files ("rules": [{ "rule", "files" }]): those fails are left out
-  const fileOf = (fail) => (String(fail).match(/^(\S+?):\d+(\s|$)/) || [])[1] || null;
+  // a decision may allow a rule in some files, some CSS rules, or everywhere ("rules": [{ "rule", "files", "selectors" }]):
+  // those fails are left out
+  const placeOf = (fail) => { const m = String(fail).match(/^(\S+?):(\d+)(\s|$)/); return m ? [m[1], +m[2]] : [null, 0]; };
   const out = results.map((r) => {
     const kept = [], allowed = [];
-    for (const f of r.fails) { const file = fileOf(f), d = file && ctx.allowed(r.id, file); if (d) allowed.push(`${f} (${d.id})`); else kept.push(f); }
+    for (const f of r.fails) { const [file, line] = placeOf(f), d = ctx.allowed(r.id, file, file ? ctx.selectorAt(file, line) : null); if (d) allowed.push(`${f} (${d.id})`); else kept.push(f); }
+    if (r.error) return { id: r.id, area: r.area || "Code", title: r.title, how: r.how, ok: false, n: null, fails: [], note: r.note, error: r.error };
     return { id: r.id, area: r.area || AREA[r.id] || "Code", title: r.title, how: r.how, ok: kept.length === 0, n: kept.length, fails: kept, note: r.note, ...(allowed.length ? { allowed } : {}) };
   });
   return { results: out, relations: extra.relations || [], steps: extra.steps || [], customMedia: extra.customMedia || [], ladder: extra.ladder || [] };

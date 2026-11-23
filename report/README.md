@@ -36,13 +36,18 @@ so the published page is always the commit's own.
    (fetched by itself in a shallow clone). Motion is the latest round's reading when the site keeps rounds, else read
    from the code (curves and times in custom properties, curves kept in a script's constant, every time in a
    transition or an animation).
-2. **Measured**: `<paths.out>/state.json` and `record-chromium.json` when the checks just ran here, else the last deploy
-   of main's from the `report-data` branch (`latest/`, fetched by itself), and `history/index.json`. The responsive
+2. **Measured**: `<paths.out>/state.json` and `record-chromium.json` when they measured this very commit, else the
+   last deploy of main's from the data branch (`checks.dataBranch`, default `report-data`: `latest/`), and
+   `history/index.json`. The data branch is fetched (shallow, quiet) every time before it is read, so a copy fetched
+   hours ago never passes for main's latest; a local state of another commit is shown (labelled with its commit) only
+   when the data branch has none. The responsive
    picture and the map come from the record's sweep. When the state is not this commit's own, the page says whose it is
    in plain words («measured on main at abc1234, before this change»), on What needs you, at the top of the system and
    above every tab's checks; the data has it as `checks.whose` (and `checks.own`).
-3. **Pictures** (`site-kit shots`): `<paths.out>/shots/index.json` and its images when present, else
-   `report-data:shots/`; copied into `blocks/` of the output. Each block's files are fingerprinted again now
+3. **Pictures** (`site-kit shots`): the data branch's `shots/index.json` with the local `<paths.out>/shots/index.json`
+   put in (`mergeShots`: after `shots --changed` the local index holds only the blocks taken again); each picture is
+   copied into `blocks/` from where it is (`from: "local"` or `"data"`), and the page says so. A picture kept from an
+   older run because the last one could not take that size has its own date and is marked "may be out of date". Each block's files are fingerprinted again now
    (`git hash-object`) against the ones stored with its pictures.
 
 ## What it writes (into the output folder)
@@ -59,8 +64,15 @@ so the published page is always the commit's own.
 | `state.json`, `history.json` | the checks' state the page shows and the history, for agents and anything else that reads them |
 
 No module scripts and no fetch on the page, so it opens from `file://`. Served under the site (a path ending in
-`/report/`), the Blocks frame shows this very build (`../#<anchor>`, and a switch to main); from the disk it shows
-`live`.
+`/<report path>/`), the Blocks frame shows this very build (the site's root that many folders up, `../#<anchor>` for
+`report`, and a switch to main); from the disk it shows `live`. The report path is `meta.reportPath`: `--path`, else
+`SITE_KIT_REPORT_PATH` (the workflows set it from `report-path`), else where `--out` lies under `paths.dist`, else
+`report`.
+
+Every tab draws whatever the site has: a scale without `range.height`, `type.relations`, `lineHeight`, `tracking` or
+`aliases`, no rounds, no checks yet and no pictures (the Figma aliases box, the line heights and the distance between
+levels show only when the scale names them). `test/report.browser.test.mjs` loads every tab of such a site in Chromium
+(`SITE_KIT_BROWSER=1`).
 
 ## The adapter fields it reads
 

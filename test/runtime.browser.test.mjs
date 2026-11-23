@@ -22,6 +22,10 @@ const page = (q = "") => `<!doctype html><html data-box-param="fmbox"><head><met
   const s = await import("/runtime/scroller.js"), g = await import("/runtime/gpu.js"), l = await import("/runtime/loaded.js");
   s.to(500);
   window.result = { early, late, boxed: document.documentElement.classList.contains("boxed"), box: !!s.box, y: s.y(), win: scrollY, gpu: g.realGPU(), renderer: g.rendererOf(document.createElement("canvas").getContext("webgl2")) };
+  // a software context gpuContext turns down is let go (lost); with the caveat the browser may refuse it itself
+  { const c = document.createElement("canvas"), got = g.gpuContext(c, "webgl2"), again = c.getContext("webgl2");
+    const caveat = !document.createElement("canvas").getContext("webgl2", { failIfMajorPerformanceCaveat: true });
+    window.release = { refused: got === null, lost: again ? again.isContextLost() : null, caveat }; }
   l.whenLoaded(() => { window.loadedRan = true; });
 </script></head><body><div class="page" data-page><div class="tall"></div><div class="bar-guard" aria-hidden="true"></div></div></body></html>`;
 
@@ -44,6 +48,9 @@ test("runtime helpers in Chromium", { skip: !on && "set SITE_KIT_BROWSER=1" }, a
     assert.equal(plain.boxed, false);
     assert.equal(plain.y, 500); assert.equal(plain.win, 500);
     assert.equal(plain.gpu, false, `SwiftShader is not a real GPU (renderer: ${plain.renderer})`);
+    const rel = await p.evaluate(() => window.release);
+    assert.equal(rel.refused, true);
+    assert.ok(rel.caveat || rel.lost === true, `a software context it turned down is lost (${JSON.stringify(rel)})`);
     const boxed = await get("?fmbox=1");
     assert.equal(boxed.boxed, true); assert.equal(boxed.box, true);
     assert.equal(boxed.y, 500, "the box scrolled"); assert.equal(boxed.win, 0, "the window did not");

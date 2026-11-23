@@ -3,7 +3,8 @@
 # - Measured: on main always; on a pull request only when `site-kit changed` says a design file changed
 #   (cfg.checks.designPaths) or the pull request has the label `checks` (adding the label starts a run). A run that
 #   skips the measuring still says so in its summary: the preview's review page then shows main's measurements.
-# - Kept on the report-data branch (`site-kit checks keep`): main → latest/ and history/; a pull request → pr/<n>/
+# - Kept on the data branch (the adapter's checks.dataBranch, default report-data; `site-kit checks keep`):
+#   main → latest/ and history/; a pull request → pr/<n>/
 #   (compared with main's latest/); a closed pull request's pr/<n>/ is removed (job `forget`). A broken run of main is
 #   kept apart and never becomes the baseline.
 # - Pictures (`site-kit shots --changed`, only the blocks whose files changed since their last pictures): on main
@@ -89,6 +90,8 @@ jobs:
     env:
       SITE_KIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SITE_KIT_PR: ${{ github.event.pull_request.number }}
+      SITE_KIT_MAIN: ${{ inputs.main-branch }}
+      SITE_KIT_REPORT_PATH: ${{ inputs.report-path }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -97,7 +100,7 @@ jobs:
           cache: npm
       - run: ${{ inputs.install }}
 
-      # where the adapter keeps things (cfg.paths): the checks' records, the built site
+      # where the adapter keeps things (cfg.paths): the checks' records; and the data branch (checks.dataBranch)
       - name: The site's paths
         id: paths
         run: |
@@ -105,6 +108,7 @@ jobs:
             import { loadConfig } from "site-kit/config";
             const c = await loadConfig();
             console.log("out=" + c.paths.out);
+            console.log("data=" + c.checks.dataBranch);
           ' >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -173,11 +177,12 @@ jobs:
         if: steps.decide.outputs.measure == 'true'
         env:
           OUT: ${{ steps.paths.outputs.out }}
+          DATA: ${{ steps.paths.outputs.data }}
         run: |
           mkdir -p "$OUT/prev"
-          if git fetch --depth=1 origin +refs/heads/report-data:refs/remotes/origin/report-data; then
-            git show origin/report-data:latest/state.json > "$OUT/prev/state.json" || rm -f "$OUT/prev/state.json"
-            git show origin/report-data:latest/record-chromium.json > "$OUT/prev/record.json" || rm -f "$OUT/prev/record.json"
+          if git fetch --depth=1 origin "+refs/heads/$DATA:refs/remotes/origin/$DATA"; then
+            git show "origin/$DATA:latest/state.json" > "$OUT/prev/state.json" || rm -f "$OUT/prev/state.json"
+            git show "origin/$DATA:latest/record-chromium.json" > "$OUT/prev/record.json" || rm -f "$OUT/prev/record.json"
           fi
           more=""
           for f in "$OUT"/record-*.json; do
@@ -193,7 +198,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.decide.outputs.shots != '' }}
         run: npx --no-install site-kit shots --${{ steps.decide.outputs.shots }} || echo "::warning title=Shots::the pictures could not be taken"
 
-      - name: Keep the record (report-data branch)
+      - name: Keep the record (the data branch)
         if: steps.decide.outputs.measure == 'true'
         run: npx --no-install site-kit checks keep ${{ github.event_name == 'pull_request' && format('--pr {0}', github.event.pull_request.number) || '' }}
 
@@ -259,6 +264,8 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: write
+    env:
+      SITE_KIT_MAIN: ${{ inputs.main-branch }}
     steps:
       - uses: actions/checkout@v4
         with:

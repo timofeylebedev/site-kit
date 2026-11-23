@@ -8,7 +8,7 @@ import { make } from "./make.mjs";
 import { scoreAll, search } from "./search.mjs";
 
 export async function run(args, cfg) {
-  const opt = options(args), sub = ["score", "search"].includes(args[0]) ? args[0] : null;
+  const opt = options(args, ["only", "bits", "chroma", "target", "format"]), sub = ["score", "search"].includes(args[0]) ? args[0] : null;
   const only = typeof opt("only") === "string" ? opt("only") : null;
   if (!cfg.images) { console.log("images: no `images` in site-kit.config.mjs"); return 0; }
   if (sub === "score") { await scoreAll(cfg, { only }); return 0; }

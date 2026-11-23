@@ -26,8 +26,11 @@ site-kit checks answer <id> "<answer>" ["note"]   # record the owner's answer (a
 site-kit checks answer "FM answer · <id>: <answer> — <note>"   # the line the report's button copied, as it is
 ```
 
-Env: `SITE_KIT_SHA` (else `FM_HEAD_SHA`, `GITHUB_SHA`, git HEAD) the commit measured; `SITE_KIT_PR` (else `FM_PR`)
-the pull request; `SITE_KIT_ENGINE` (else `FM_ENGINE`) the engine; `PLAYWRIGHT_CHROMIUM` a Chromium to launch.
+Env (read in one place, `lib/env.mjs`): `SITE_KIT_SHA` (else `GITHUB_SHA`, git HEAD) the commit measured;
+`SITE_KIT_PR` the pull request; `SITE_KIT_ENGINE` the engine; `SITE_KIT_MAIN` the live branch (the workflows set it
+from `main-branch`; else the adapter's `mainBranch`, else `main`); `PLAYWRIGHT_CHROMIUM` a Chromium to launch.
+Flow Medium's old names (`FM_HEAD_SHA`, `FM_PR`, `FM_ENGINE`) still work in v0.1 and go in v0.2. An option that takes
+a value (`--out`, `--record` …) given without one stops the command with a clear message.
 `playwright` is a peer dependency, resolved from the site's node_modules.
 
 ## Files
@@ -51,7 +54,7 @@ the pull request; `SITE_KIT_ENGINE` (else `FM_ENGINE`) the engine; `PLAYWRIGHT_C
 | `paths.dist`, `out`, `scale`, `decisions`, `questions`, `styles`, `scripts`, `pages` | what is served, where the records go, the system's files |
 | `colours` | the palette: `(io) => [{ name, value }]`, or `{ file, read(json) }` |
 | `css.tokens`, `css.media` | the token stylesheets (definitions may hold literal colours; every token must be used) and the page steps (`@custom-media`) |
-| `checks.pages`, `sizes` | the pages (`main: true` for the home page) and the full sizes |
+| `checks.pages`, `sizes` | the pages (`main: true` for the home page) and the full sizes; default: the home page and a not-found page (`no-such-page`, status 404), and eight screens (320×568, 390×844, 844×390, 768×1024, 1024×768, 1366×650, 1440×900, 1920×1080: `DEFAULT_CHECKS` in lib/config.mjs) |
 | `checks.query`, `unstyle` | added to every address; `[[regex, replacement]]` rewritten in served documents and stylesheets |
 | `checks.skip`, `notIcons`, `typeObjects`, `align`, `cards`, `paragraphs` | the collector's selectors |
 | `checks.sections` | where the collector stops (default `main > section, body > footer`) |
@@ -63,7 +66,9 @@ the pull request; `SITE_KIT_ENGINE` (else `FM_ENGINE`) the engine; `PLAYWRIGHT_C
 | `checks.consent` | `{ button, label, storage, version(io), hover, allowedBefore, stored(version)? }`, or null for a site that asks for none: then the privacy step records the hosts called (`privacy.hosts`), with no before/after |
 | `checks.objectRadii`, `ratioFamilies` | corners of objects drawn as a whole; the families of aspect ratios |
 | `checks.notes` | `{ "<rule id>": "…" }`: the site's own words added to a measured rule's `how` |
-| `checks.dataBranch` | the history's branch (default `report-data`) |
+| `checks.dataBranch` | the history's branch (default `report-data`): keep, the report, `shots --changed` and the workflows all use it |
+| `mainBranch` | the live branch (default `main`; `SITE_KIT_MAIN` overrides): only its runs write `latest/`, `history/`, `shots/` |
+| `rules.decisionFields` | what every decision must have, and each kind besides: `["id", "what", "why"]` (default) or `{ "*": […], exception: ["rule", "fix"] }` |
 | `rules.code` | `(ctx) => [{ id, area, title, how, fails, note? }]`: the site's own code rules |
 | `rules.generated`, `drawings`, `objectType`, `steps`, `curves`, `notes` | set up the generic code rules (top of `source.mjs`); a rule whose input is missing is not run |
 | `report.blocks` | `keep` drops the kept pictures of blocks no longer listed |
@@ -93,7 +98,11 @@ the pull request; `SITE_KIT_ENGINE` (else `FM_ENGINE`) the engine; `PLAYWRIGHT_C
 - **Nothing leaves the machine.** Other hosts are answered with nothing, but every request is recorded: that is how
   the privacy step sees what would run before consent.
 - **A step that fails is not a pass.** A failed or skipped step makes its rules «could not run»; their last findings
-  are carried, and such a run never becomes main's baseline (`keep` puts it under `broken/`).
+  are carried, and such a run never becomes main's baseline (`keep` puts it under `broken/`). Only the first engine
+  counts for that: a WebKit step that fails marks its rules' WebKit result «could not run» (`webkit.status: "error"`)
+  and leaves Chromium's result and main's baseline alone. Code rules that cannot run (the lessons' module fails to
+  load, or a rule throws) are «could not run» too, by the ids of `rules/ids.mjs`, with their findings carried; they
+  do not make a run broken.
 - **Keys stay the same from run to run.** A code finding is keyed by file and what it found (not the line); a picture
   by its name without the build's hash. Otherwise an edit above a line would make a finding «fixed» and «new» again.
 - **A decision never hides a finding for good.** It is bound with a band; when the value leaves it, or the decision
@@ -111,7 +120,9 @@ thing from run to run). If it needs a new measurement, add it to `collect.js` (g
 - Code findings name files from the site's root: FM's curves rule wrote `scripts/<f>` for `src/scripts/<f>`, so the
   keys of those findings change once (`code.curves::src/scripts/…`).
 - The lessons (`rules/learnings.mjs`) run with the code rules: new rules `code.learn.*`.
-- A decision may allow a code rule in some files (`"rules": [{ "rule", "files" }]`); the decisions rule checks that
-  each entry names its rule.
+- A decision may allow a code rule (`"rules": [{ "rule", "files", "selectors" }]`): `files` a regex of the file
+  (omitted: site-wide), `selectors` a regex of the CSS rule the place is in (omitted: any); the decisions rule checks
+  that each entry names its rule. The fields a decision needs come from `rules.decisionFields` (FM's adapter sets FM's
+  own: id, kind, what, decided, why; rule and fix for an exception).
 - Some `how` texts and titles are worded for any site (FM's words come from `checks.notes`, `consent.label`); the
   robots.txt note fires only on `Disallow: /` for the whole site.

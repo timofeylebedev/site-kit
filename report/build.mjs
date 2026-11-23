@@ -9,19 +9,22 @@
 //   typeset.js   the kit's typeset/core.js + lint.js bundled for the browser (window.Typeset): the demo runs the real code
 //   fonts/       the site's fonts
 //   shots/       the rounds' pictures (paths.shots: the rounds point to them as "shots/…")
-//   blocks/      the latest pictures of the blocks (layer 3: `site-kit shots`), from the checks' out folder or report-data
+//   blocks/      the latest pictures of the blocks (layer 3: `site-kit shots`): the data branch's kept ones, with this
+//                run's (the checks' out folder: only the blocks it took again) put in
 //   state.json   the checks' state the page shows (for agents and anything else that reads it), and history.json
 //
 // The three layers (SPEC.md): what is read from the code is rebuilt every time; the measured state is this commit's
-// when the checks just ran on it, else the last deploy of main's, and the page says whose it is; the pictures are the
-// latest ones, each marked "may be out of date" when a file it was taken from has changed since.
+// when the checks just ran on it, else the last deploy of main's (the data branch, fetched afresh each time), and the
+// page says whose it is; the pictures are the latest ones, each marked "may be out of date" when a file it was taken
+// from has changed since.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { KIT, siteIO } from "../lib/config.mjs";
+import { KIT, siteIO, env, mainBranch, dataBranch } from "../lib/config.mjs";
+import { mergeShots, freshFile } from "../shots/index.mjs";
 import {
   clone, same, cleanAll, shadowsOf, groupShadows, stepsOf, containerSteps, mediaOf, cssColours, motionFromCode,
   mapFromSweep, pictureFromSweep, heightLineOf, typesetRules, whoseState, blockShots,
@@ -32,6 +35,11 @@ const PAGE = path.join(KIT, "report/page");
 export async function buildReport(cfg, opts = {}) {
   const io = siteIO(cfg), R = cfg.report || {}, P = cfg.paths;
   const OUT = path.resolve(cfg.root, opts.out || P.report);
+  // where the page is served under the site (its frame shows "this build" from there): --path, SITE_KIT_REPORT_PATH,
+  // else where --out puts it under paths.dist (dist/report → "report"), else "report"
+  const underDist = path.relative(io.abs(P.dist), OUT);
+  const REPORT_PATH = (opts.path || env("REPORT_PATH") || (underDist && !underDist.startsWith("..") && !path.isAbsolute(underDist) ? underDist.split(path.sep).join("/") : "report")).replace(/^\/+|\/+$/g, "");
+  const DATA = dataBranch(cfg), MAIN = mainBranch(cfg);
   const git = io.git, tryGit = io.tryGit;
   const log = opts.quiet ? () => {} : (...a) => console.log(...a);
 
@@ -73,10 +81,11 @@ export async function buildReport(cfg, opts = {}) {
   const removedRoles = (kind) => Object.keys(scaleThen[kind]?.roles || {}).filter((n) => !scale[kind]?.roles?.[n]);
 
   // ── the stylesheets: shadows and layout steps (now and at the baseline) ─────────────────────────────────────────
-  const styles = P.styles.replace(/\/$/, "");
+  // paths.styles: a folder or a list of folders and files; the page names files from the first
+  const stylesList = [].concat(P.styles).map((x) => x.replace(/\/$/, "")), styles = stylesList[0];
   const isCss = (f) => f.endsWith(".css") && !f.endsWith(".gen.css");
-  const cssFilesNow = (tryGit("ls-files", styles)?.split("\n").filter(isCss)) || io.files(styles, ".css").filter(isCss);
-  const cssFilesThen = NO_BASE ? [] : (tryGit("ls-tree", "-r", "--name-only", SINCE, styles) || "").split("\n").filter(isCss);
+  const cssFilesNow = (tryGit("ls-files", "--", ...stylesList)?.split("\n").filter(isCss)) || io.files(stylesList, ".css").filter(isCss);
+  const cssFilesThen = NO_BASE ? [] : (tryGit("ls-tree", "-r", "--name-only", SINCE, "--", ...stylesList) || "").split("\n").filter(isCss);
   const shNow = shadowsOf(cssFilesNow, (f) => io.read(f), styles);
   const shThen = shadowsOf(cssFilesThen, (f) => atBase(f), styles);
   const shadows = groupShadows(shNow, shThen, R.shadow);
@@ -118,7 +127,7 @@ export async function buildReport(cfg, opts = {}) {
     const cards = blockOf(sec.motion, "cards");
     motionCards = cards ? cleanAll(clone(cards)) : null;
   } else {
-    const css = Object.fromEntries(io.files(styles, ".css").map((f) => [f, io.read(f)]));
+    const css = Object.fromEntries(io.files(stylesList, ".css").map((f) => [f, io.read(f)]));
     const js = Object.fromEntries(io.files(P.scripts || "src/scripts", [".js", ".mjs"]).map((f) => [f, io.read(f)]));
     motion = { id: "motion", fromCode: true, blocks: motionFromCode(css, js) };
   }
@@ -133,23 +142,26 @@ export async function buildReport(cfg, opts = {}) {
   // the colours the stylesheets name (the shadow tiles are drawn with them)
   const cssVars = cssColours((cfg.css?.tokens || []).filter((f) => io.exists(f)).map((f) => io.read(f)), R.cssVars || {});
 
-  // ── the checks: this commit's (just run), or the last deploy of main's (report-data) ─────────────────────────────
+  // ── the checks: this commit's (just run), else the last deploy of main's (the data branch) ──────────────────────
   const outDir = io.abs(P.out);
   const local = (f) => (fs.existsSync(path.join(outDir, f)) ? fs.readFileSync(path.join(outDir, f), "utf8") : null);
-  const headFull = (process.env.SITE_KIT_SHA || tryGit("rev-parse", "HEAD") || "").trim();
+  const headFull = (env("SHA") || tryGit("rev-parse", "HEAD") || "").trim();
   // the branch it was built from (GitHub's checkout of a pull request has no branch of its own)
   const ref = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || (tryGit("rev-parse", "--abbrev-ref", "HEAD") || "").trim();
+  // the data branch, fetched afresh (quietly; no remote or no network: whatever copy is here)
+  io.fetchBranch(DATA);
+  const fromData = (f) => tryGit("show", `origin/${DATA}:${f}`);
+  const commitOf = (text) => { try { return JSON.parse(text).commit || ""; } catch { return ""; } };
   let checksState = local("state.json"), checksRecord = local("record-chromium.json"), whose = null;
-  // a local run is «this build» only when it measured this very commit; an older one says whose it is
-  if (checksState) whose = whoseState({ local: true, commit: JSON.parse(checksState).commit || "", head: headFull });
-  const haveData = () => tryGit("rev-parse", "--verify", "-q", "refs/remotes/origin/report-data") != null;
-  if (!haveData()) tryGit("fetch", "--depth=1", "origin", "+refs/heads/report-data:refs/remotes/origin/report-data");
-  if (!checksState) {
-    checksState = tryGit("show", "origin/report-data:latest/state.json");
-    checksRecord = tryGit("show", "origin/report-data:latest/record-chromium.json");
-    if (checksState) whose = whoseState({ local: false, commit: JSON.parse(checksState).commit || "", head: headFull, ref });
-  }
-  const historyIdx = tryGit("show", "origin/report-data:history/index.json");
+  // a local run is «this build» only when it measured this very commit; an older local run gives way to main's last
+  // deploy, and is shown (labelled with its commit) only when there is none
+  const localOwn = checksState && headFull && commitOf(checksState).slice(0, 7) === headFull.slice(0, 7);
+  const dataState = localOwn ? null : fromData("latest/state.json");
+  if (dataState) {
+    checksState = dataState; checksRecord = fromData("latest/record-chromium.json");
+    whose = whoseState({ local: false, commit: commitOf(checksState), head: headFull, ref, main: MAIN });
+  } else if (checksState) whose = whoseState({ local: true, commit: commitOf(checksState), head: headFull });
+  const historyIdx = fromData("history/index.json");
   const checks = checksState ? JSON.parse(checksState) : null;
   const record = checksRecord ? JSON.parse(checksRecord) : null;
   if (checks) Object.assign(checks, { from: whose.from, whose: whose.whose, own: whose.own });
@@ -181,20 +193,26 @@ export async function buildReport(cfg, opts = {}) {
   });
   const sysRound = sec.system?.blocks || [];
 
-  // ── the pictures of the blocks (layer 3) ──────────────────────────────────────────────────────────────────────────
+  // ── the pictures of the blocks (layer 3): the data branch's, with this run's put in ─────────────────────────────────
+  // (after `shots --changed` the local index holds only the blocks taken again: the others keep their kept pictures)
   const shotsLocal = path.join(outDir, "shots");
-  let shotsIndex = null, shotsFrom = null;
-  if (fs.existsSync(path.join(shotsLocal, "index.json"))) { shotsIndex = JSON.parse(fs.readFileSync(path.join(shotsLocal, "index.json"), "utf8")); shotsFrom = "local"; }
-  else { const t = tryGit("show", "origin/report-data:shots/index.json"); if (t) { shotsIndex = JSON.parse(t); shotsFrom = "report-data"; } }
+  const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
+  const localIdx = fs.existsSync(path.join(shotsLocal, "index.json")) ? parse(fs.readFileSync(path.join(shotsLocal, "index.json"), "utf8")) : null;
+  const keptIdx = parse(fromData("shots/index.json"));
+  const ids = (R.blocks || []).map((b) => b.id);
+  const shotsIndex = localIdx || keptIdx ? mergeShots(keptIdx, localIdx, ids.length ? ids : null) : null;
+  const isFresh = freshFile(localIdx);
   const hashes = new Map();
   const hashNow = (p) => { if (!hashes.has(p)) hashes.set(p, io.exists(p) ? (tryGit("hash-object", p) || "").trim() : null); return hashes.get(p); };
-  const shots = { from: shotsFrom, blocks: blockShots(R.blocks || [], shotsIndex, hashNow) };
+  const shots = { from: null, dataBranch: DATA, blocks: blockShots(R.blocks || [], shotsIndex, hashNow, isFresh) };
+  const froms = new Set(Object.values(shots.blocks).flatMap((b) => b.sizes.map((s) => s.from)));
+  shots.from = froms.size > 1 ? "both" : froms.has("local") ? "local" : froms.has("data") ? "report-data" : null;
 
   // ── write ─────────────────────────────────────────────────────────────────────────────────────────────────────────
   const head = headFull.slice(0, 7);
   const built = (tryGit("log", "-1", "--format=%cs") || new Date().toISOString().slice(0, 10)).trim();
   const REPORT = {
-    meta: { ...(data?.meta || {}), built, head, ref, noBase: NO_BASE, since: SINCE, sinceLabel: SINCE_LABEL },
+    meta: { ...(data?.meta || {}), built, head, ref, main: MAIN, reportPath: REPORT_PATH, noBase: NO_BASE, since: SINCE, sinceLabel: SINCE_LABEL },
     rounds,
     system: {
       colour, colourWhere: clone(sysRound.find((b) => b.title === "Colour")) || null,
@@ -221,10 +239,11 @@ export async function buildReport(cfg, opts = {}) {
   for (const b of Object.values(shots.blocks)) for (const s of b.sizes) {
     const to = path.join(OUT, "blocks", s.file);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    if (shotsFrom === "local" && fs.existsSync(path.join(shotsLocal, s.file))) { fs.copyFileSync(path.join(shotsLocal, s.file), to); pics++; }
-    else if (shotsFrom === "report-data") {
-      try { fs.writeFileSync(to, execFileSync("git", ["show", `origin/report-data:shots/${s.file}`], { cwd: cfg.root, maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"] })); pics++; } catch { s.missing = true; }
-    } else s.missing = true;
+    if (s.from === "local") {
+      if (fs.existsSync(path.join(shotsLocal, s.file))) { fs.copyFileSync(path.join(shotsLocal, s.file), to); pics++; } else s.missing = true;
+    } else {
+      try { fs.writeFileSync(to, execFileSync("git", ["show", `origin/${DATA}:shots/${s.file}`], { cwd: cfg.root, maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"] })); pics++; } catch { s.missing = true; }
+    }
   }
 
   const json = JSON.stringify(REPORT).replace(/<\/(script)/gi, "<\\/$1");
@@ -250,7 +269,7 @@ export async function buildReport(cfg, opts = {}) {
   if (historyIdx) fs.writeFileSync(path.join(OUT, "history.json"), historyIdx); else fs.rmSync(path.join(OUT, "history.json"), { force: true });
 
   const kb = (f) => Math.round(fs.statSync(path.join(OUT, f)).size / 1024) + " KB";
-  log(`${path.relative(process.cwd(), OUT) || "."}/data.js ${kb("data.js")} · typeset.js ${tsOk ? kb("typeset.js") : "not bundled"} · ${SINCE ? `since ${SINCE.slice(0, 7)}` : "no baseline"} · rounds ${rounds.length} · checks ${checks ? `of ${checks.commit.slice(0, 7)} (${whose.whose}): ${checks.summary.fail} fail, ${checks.summary.warn} warn` : "none yet"} · pictures of ${Object.values(shots.blocks).filter((b) => b.sizes.length).length} blocks${shotsFrom ? ` (${shotsFrom})` : ""}`);
+  log(`${path.relative(process.cwd(), OUT) || "."}/data.js ${kb("data.js")} · typeset.js ${tsOk ? kb("typeset.js") : "not bundled"} · ${SINCE ? `since ${SINCE.slice(0, 7)}` : "no baseline"} · rounds ${rounds.length} · checks ${checks ? `of ${checks.commit.slice(0, 7)} (${whose.whose}): ${checks.summary.fail} fail, ${checks.summary.warn} warn` : "none yet"} · pictures of ${Object.values(shots.blocks).filter((b) => b.sizes.length).length} blocks${shots.from ? ` (${shots.from === "both" ? `this run's and ${DATA}'s` : shots.from})` : ""}`);
   if (SINCE && !NO_BASE) log(`  new since ${SINCE.slice(0, 7)}: colours ${colour.flatMap((g) => g.tokens).filter((t) => t.isNew || t.was).length}, type ${typeRoles.filter((r) => r.isNew || r.was).length}, space ${spaceRoles.filter((r) => r.isNew || r.was).length}, steps ${containers.filter((c) => c.isNew).length + pageSteps.filter((p) => p.isNew).length}, shadows ${shadows.filter((s) => s.isNew).length}, decisions ${decisions.filter((d) => d.isNew).length} new / ${decisions.filter((d) => d.changed).length} changed, curves ${curves.filter((c) => c.isNew || c.changed).length}`);
   return { out: OUT, report: REPORT };
 }

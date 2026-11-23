@@ -14,13 +14,16 @@ site-kit rules --json out.json
 `checks/source.mjs` builds the context (SPEC.md «Code rules: one shape») and runs them with the kit's design rules and
 the site's own. `cli.mjs` prints them all, like Flow Medium's old `npm run rules`; when `checks/source.mjs` is missing it
 runs the lessons alone on `context.mjs`'s minimal context. A rule whose part of the site is not set and cannot be found
-says so in its note and fails nothing.
+says so in its note and fails nothing (`learn.window-scroll` and `learn.io-root` without a scroll module: nothing to go
+through, nothing to check). A rule that throws, or a `learnings.mjs` that cannot be loaded, is never left out: each
+lesson then comes back as «could not run» (`error`; its ids and titles are in `ids.mjs`, which imports nothing), its
+last findings carried by the state, so nothing counts as fixed and nothing comes back as «new».
 
 ## The rules
 
 | id | Fails | Why |
 |---|---|---|
-| `learn.window-scroll` | a read of `scrollY` / `scrollX` / `pageYOffset` / `pageXOffset` / the root's `scrollTop`, a `scroll` listener on the window or the document, `window.onscroll`, or `scrollTo` / `scrollBy` on the window, outside the scroll module. A name of the file's own (`import { y as scrollY }`) is not the window's | In Safari on a Mac the page scrolls in its own box (runtime/scroller.js): the window's scroll then never changes |
+| `learn.window-scroll` | (only when there is a scroll module) a read of `scrollY` / `scrollX` / `pageYOffset` / `pageXOffset` / the root's `scrollTop`, a `scroll` listener on the window or the document, `window.onscroll`, or `scrollTo` / `scrollBy` on the window, outside the scroll module. A name of the file's own (`import { y as scrollY }`) is not the window's | In Safari on a Mac the page scrolls in its own box (runtime/scroller.js): the window's scroll then never changes |
 | `learn.io-root` | an `IntersectionObserver` with a `rootMargin` and no `root` (only when there is a scroll module) | The box clips what is in it: seen from the screen, nothing below it is ever "near", and nothing loads |
 | `learn.webgl-caveat` | a `getContext("webgl" / "webgl2" / "experimental-webgl")` or a three.js `WebGLRenderer` that neither asks for `failIfMajorPerformanceCaveat` (in its options, or in the 15 lines above where the options are built) nor reads the renderer's name in the 15 lines after (`UNMASKED_RENDERER_WEBGL`, `isSoftware()`, `rendererOf()`); the gpu module is exempt | Without a GPU, Chrome copies a WebGL canvas back to the processor every frame (≈ 12 ms a frame for one ring of covers). Keeping software WebGL in a lighter form is allowed: that is what the renderer check is for |
 | `learn.bare-load` | `addEventListener("load")` on the window (bare, `window.`, `self.`, `globalThis.`) or `window.onload =`, unless the line or the three above check `document.readyState`; the loaded module is exempt | A script that starts late (after the first frame, imported on demand) comes after `load`; the listener never runs and nothing says so |
@@ -63,7 +66,9 @@ Only with a decision in decisions.json that names it (who, when, why), with a `r
   "rules": [{ "rule": "learn.window-scroll", "files": "src/scripts/debug\\.js$" }] }
 ```
 
-The rule then counts that file's fails as kept and says so in its note.
+The rule then counts that file's fails as kept and says so in its note. `files` omitted: allowed site-wide; a
+`selectors` regex: only places inside a CSS rule whose selector matches (a stylesheet's fails), e.g.
+`{ "rule": "colour-tokens", "files": "\\.css$", "selectors": "^\\.card" }`.
 
 ## Tests
 

@@ -32,6 +32,8 @@ const store = {
   set(k, v) { try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch (e) {} },
 };
 const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// the site's live branch and the branch its records and pictures are kept on (the adapter's mainBranch, checks.dataBranch)
+const MAIN = D.meta.main || "main", DATA = (D.shots && D.shots.dataBranch) || "report-data";
 const SINCE = D.meta.sinceLabel ? `since ${D.meta.sinceLabel}` : "since the baseline";
 const newPill = (it, title) => it && (it.isNew || it.was || it.changed)
   ? `<span class="pill new" title="${esc(title || (it.isNew ? "new " + SINCE : "changed " + SINCE))}">${it.isNew ? "new" : "changed"}</span>` : "";
@@ -484,8 +486,10 @@ function zchart(o) {
 /* ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
    The scale: a size at a screen (the site's scale.json, the same sums as its tokens build)
    ════════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
-const RG = S.scale.range;
-const vpOf = (w, h) => Math.min(w, RG.from + (h - RG.height.from) * (RG.to - RG.from) / (RG.height.to - RG.height.from));
+// a scale may leave out any of these (a site whose sizes do not follow the screen's height has no range.height)
+const RG = S.scale.range || { from: 320, to: 1440 }, RH = RG.height || null;
+const LH = S.scale.lineHeight || {}, REL = S.scale.relations || null;
+const vpOf = (w, h) => (RH ? Math.min(w, RG.from + (h - RH.from) * (RG.to - RG.from) / (RH.to - RH.from)) : w);
 const lerp = (px, x) => px[0] + (px[1] - px[0]) * clamp((x - RG.from) / (RG.to - RG.from), 0, 1);
 // a role sized by its card («per») follows the column: at most column.max, inside the gutter role (the adapter's
 // report.column); without one, the screen's width
@@ -497,18 +501,21 @@ const roleAt = (r, w, h) => {
   }
   return lerp(r.px, r.by === "width" ? w : vpOf(w, h));
 };
-const LADDER = (() => { const out = [0]; let v = 0; S.scale.ladder.steps.forEach(([st, to]) => { while (v < to) { v += st; out.push(v); } }); return out; })();
+// the ladder in words: "Steps of 2 up to 24, of 4 up to 64, of 8 up to 128. "
+const LADDER_WORDS = (() => { const st = (S.scale.ladder || {}).steps || []; return st.length ? "Steps " + st.map(([x, to]) => `of ${x} up to ${to}`).join(", ") + ". " : ""; })();
+const LADDER = (() => { const out = [0]; let v = 0; ((S.scale.ladder || {}).steps || []).forEach(([st, to]) => { while (v < to) { v += st; out.push(v); } }); return out; })();
 const screen = { w: store.get("w", 1440), h: store.get("h", 920) };
 const screenBar = (onChange) => {
   const bar = el("div", "screen");
   bar.innerHTML = `<label class="slider"><span>Screen width</span><input type="range" min="${RG.from}" max="${RG.to}" step="1" value="${screen.w}" data-k="w"><output></output></label>
-    <label class="slider"><span>Screen height</span><input type="range" min="${RG.height.from}" max="${RG.height.to}" step="1" value="${screen.h}" data-k="h"><output></output></label>
+    ${RH ? `<label class="slider"><span>Screen height</span><input type="range" min="${RH.from}" max="${RH.to}" step="1" value="${screen.h}" data-k="h"><output></output></label>` : ""}
     <div class="sum"></div>`;
-  const slope = (RG.to - RG.from) / (RG.height.to - RG.height.from), icpt = RG.from - slope * RG.height.from;
+  const slope = RH ? (RG.to - RG.from) / (RH.to - RH.from) : 0, icpt = RH ? RG.from - slope * RH.from : 0;
   const upd = () => {
     $$("input", bar).forEach((i) => { i.nextElementSibling.textContent = i.value + "px"; });
     const vp = vpOf(screen.w, screen.h);
-    $(".sum", bar).innerHTML = `This screen counts as <b>${r1(vp)}</b> (${vp < screen.w ? "its height holds it back: " : ""}size = min(width, ${slope} × height ${icpt < 0 ? "−" : "+"} ${Math.abs(icpt)})). The range runs from ${RG.from} to ${RG.to}; ${RG.height.from} tall counts as ${RG.from}, ${RG.height.to} tall as ${RG.to}.`;
+    $(".sum", bar).innerHTML = RH ? `This screen counts as <b>${r1(vp)}</b> (${vp < screen.w ? "its height holds it back: " : ""}size = min(width, ${slope} × height ${icpt < 0 ? "−" : "+"} ${Math.abs(icpt)})). The range runs from ${RG.from} to ${RG.to}; ${RH.from} tall counts as ${RG.from}, ${RH.to} tall as ${RG.to}.`
+      : `This screen counts as <b>${r1(vp)}</b> (its width: the scale does not follow the screen's height). The range runs from ${RG.from} to ${RG.to}.`;
   };
   bar.addEventListener("input", (e) => { const i = e.target; if (!i.dataset.k) return; screen[i.dataset.k] = +i.value; store.set(i.dataset.k, +i.value); upd(); onChange(); });
   upd();
@@ -527,7 +534,7 @@ function ladderRows(roles, { min = 0, max, at }) {
       s += `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 6}" y2="${H - 22}" stroke="${used ? css("--line-2") : css("--line")}" stroke-width="${big || used ? 1 : 0.5}"/>`;
       if ((used || v % 16 === 0) && X(v) - lastX > 16) { s += `<text x="${X(v)}" y="${H - 8}" fill="${used ? css("--muted") : css("--faint")}" font-size="10.5" text-anchor="middle">${v}</text>`; lastX = X(v); }
     });
-    S.scale.ladder.steps.reduce((a0, [st, to]) => { const a = Math.max(a0, min); if (a < max && to > min) s += `<text x="${(X(a) + X(Math.min(to, max))) / 2}" y="14" fill="${css("--faint")}" font-size="10.5" text-anchor="middle">steps of ${st}</text><line x1="${X(a) + 3}" x2="${X(Math.min(to, max)) - 3}" y1="20" y2="20" stroke="${css("--line-2")}"/>`; return to; }, 0);
+    ((S.scale.ladder || {}).steps || []).reduce((a0, [st, to]) => { const a = Math.max(a0, min); if (a < max && to > min) s += `<text x="${(X(a) + X(Math.min(to, max))) / 2}" y="14" fill="${css("--faint")}" font-size="10.5" text-anchor="middle">steps of ${st}</text><line x1="${X(a) + 3}" x2="${X(Math.min(to, max)) - 3}" y1="20" y2="20" stroke="${css("--line-2")}"/>`; return to; }, 0);
     roles.forEach((r, i) => {
       const y = top + i * rowH + 12, [a, b] = r.px, v = at(r), c = PAL[i % PAL.length];
       s += `<text x="0" y="${y + 4}" fill="${css("--muted")}" font-size="12">${esc(r.name)}</text>`;
@@ -568,7 +575,7 @@ const tabHasNew = {
 function systemPage(tab) {
   const page = el("div", "page");
   const head = el("header", "head");
-  head.innerHTML = `<div class="eyebrow">The system · ${esc(D.meta.ref || "main")} at ${commit(D.meta.head)}</div>
+  head.innerHTML = `<div class="eyebrow">The system · ${esc(D.meta.ref || MAIN)} at ${commit(D.meta.head)}</div>
     <h1>The system as it is now</h1>
     <p class="lede">Every colour, size, step, shadow, curve and decision of the site, read from the repo's own files when this page was built (${esc(D.meta.built)}). ${D.meta.noBase ? "Nothing is marked new: there is no baseline to compare with." : `Things that are new or changed ${esc(SINCE)} carry a <span class="pill new">new</span> mark${D.rounds.length ? "; the rounds that changed them are in the sidebar" : ""}.`}</p>${whoseNote()}`;
   page.appendChild(head);
@@ -627,14 +634,14 @@ function colourTab(panel) {
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 function typeTab(panel) {
-  panelHead(panel, "Type", "Every text role of " + (SITE.paths && SITE.paths.scale || "the scale") + ": its two ends on the ladder (at " + RG.from + " and " + RG.to + "), the size it has on the screen set below, and a text from the site drawn at that size in the site's own font. The roles keep their distance at both ends (×" + S.scale.relations.min + " at least), so at every size between.");
+  panelHead(panel, "Type", "Every text role of " + (SITE.paths && SITE.paths.scale || "the scale") + ": its two ends on the ladder (at " + RG.from + " and " + RG.to + "), the size it has on the screen set below, and a text from the site drawn at that size in the site's own font. " + (REL ? "The roles keep their distance at both ends (×" + REL.min + " at least), so at every size between." : "The scale names no relations between the roles (type.relations)."));
   const roles = S.type;
   let lad, cards = [], relBox, chart = null, chartH = 0;
   const at = (r) => roleAt(r, screen.w, screen.h);
   const update = () => {
     lad._draw();
     cards.forEach(({ r, node }) => {
-      const v = at(r), lh = typeof r.lh === "number" ? r.lh : S.scale.lineHeight[r.lh] || 1.3;
+      const v = at(r), lh = typeof r.lh === "number" ? r.lh : LH[r.lh] || 1.3;
       $(".role__now", node).textContent = r2(v) + "px";
       const smp = $(".role__sample", node); smp.style.fontSize = v + "px";
       $(".role__meta", node).textContent = `${faceName(r)} ${r.weight || 400} · line ${lh} = ${r1(v * lh)}px`;
@@ -644,7 +651,7 @@ function typeTab(panel) {
     if (screen.h !== chartH) { const n = makeChart(); chart._dispose?.(); chart.replaceWith(n); chart = n; } else chart._set({ marker: screen.w });
   };
   panel.appendChild(screenBar(() => update()));
-  const lb = el("div", "block"); lb.innerHTML = `<h3>On the ladder</h3><p class="sub">Steps of 2 up to 24, of 4 up to 64, of 8 up to 128. Each role runs from its size at 320 to its size at 1440 (both on the ladder); the filled dot is the size on this screen.</p>`;
+  const lb = el("div", "block"); lb.innerHTML = `<h3>On the ladder</h3><p class="sub">${LADDER_WORDS}Each role runs from its size at ${RG.from} to its size at ${RG.to} (both on the ladder); the filled dot is the size on this screen.</p>`;
   lad = ladderRows(roles, { min: 10, max: ladderTop(roles, 64), at });
   lb.appendChild(lad); panel.appendChild(lb);
   const spec = el("div", "block"); spec.innerHTML = `<h3>The roles</h3>`;
@@ -652,7 +659,7 @@ function typeTab(panel) {
   roles.forEach((r) => {
     const node = el("div", "role");
     const color = r.color ? (S.cssVars || {})[r.color] || r.color : "#000";
-    const lh = typeof r.lh === "number" ? r.lh : S.scale.lineHeight[r.lh] || 1.3;
+    const lh = typeof r.lh === "number" ? r.lh : LH[r.lh] || 1.3;
     node.innerHTML = `<div class="role__top"><code>${esc(r.name)}</code>${newPill(r, r.was ? `changed ${SINCE}: was ${r.was.px.join(" → ")}` : "")}<span class="role__ends">${r.px[0]} → ${r.px[1]}${r.label ? " · a label" : ""}</span><span class="role__now"></span><span class="role__meta"></span></div>
       <div class="role__sample" lang="${esc(SITE.lang || "en")}" style="font-family:${r.font === "display" ? "var(--display)" : "var(--site-text)"};font-weight:${r.weight || 400};line-height:${lh};color:${color};${r.upper ? "text-transform:uppercase;" : ""}${r.track ? "letter-spacing:" + r.track + ";" : ""}">${esc(TS && TS.typeset ? TS.typeset(r.text || SAMPLE_LINE, { lang: SITE.lang || "en", heading: r.font === "display" }) : r.text || SAMPLE_LINE)}</div>
       <p class="role__use">${esc(r.use || "")}${r.where ? ` · <span class="note">${esc(r.where)}</span>` : ""}</p>`;
@@ -660,11 +667,14 @@ function typeTab(panel) {
   });
   spec.appendChild(list); panel.appendChild(spec);
   // relations at this screen
-  relBox = el("div", "block"); relBox.innerHTML = `<h3>Distance between levels</h3><p class="sub">The pairs of type.relations at this screen: the bar is the ratio of the two sizes, the dashed line the least allowed (×${S.scale.relations.min}). ${esc(S.scale.relations.$about || "")}</p><div class="rel box"></div>`;
-  panel.appendChild(relBox);
+  if (REL) {
+    relBox = el("div", "block"); relBox.innerHTML = `<h3>Distance between levels</h3><p class="sub">The pairs of type.relations at this screen: the bar is the ratio of the two sizes, the dashed line the least allowed (×${REL.min}). ${esc(REL.$about || "")}</p><div class="rel box"></div>`;
+    panel.appendChild(relBox);
+  }
   const drawRel = () => {
-    const top = 1.8, min = S.scale.relations.min;
-    $(".rel", relBox).innerHTML = S.scale.relations.pairs.map(([a, b]) => {
+    if (!REL) return;
+    const top = 1.8, min = REL.min;
+    $(".rel", relBox).innerHTML = (REL.pairs || []).filter(([a, b]) => roles.some((r) => r.name === a) && roles.some((r) => r.name === b)).map(([a, b]) => {
       const ra = roles.find((r) => r.name === a), rb = roles.find((r) => r.name === b), k = at(ra) / at(rb);
       return `<div class="rel__row"><span>${esc(a.replace("type/", ""))} / ${esc(b.replace("type/", ""))}</span><div class="rel__bar"><i style="width:${clamp((k - 1) / (top - 1), 0, 1) * 100}%"></i><s style="left:${((min - 1) / (top - 1)) * 100}%"></s></div><span class="k ${k < min - 1e-9 ? "no" : ""}">×${k.toFixed(3)}</span></div>`;
     }).join("");
@@ -677,8 +687,11 @@ function typeTab(panel) {
   chart = makeChart();
   cb.appendChild(chart); panel.appendChild(cb);
   const extra = el("div", "grid2");
-  extra.innerHTML = `<div class="box"><h3>Line heights</h3><p>${Object.entries(S.scale.lineHeight).map(([k, v]) => `<b>${esc(k)}</b> ${v}`).join(" · ")}: tighter as text gets bigger. Labels are tracked ${esc(S.scale.tracking.label)}.</p></div><div class="box"><h3>Figma aliases</h3><p>${Object.entries(S.scale.aliases).filter(([k]) => k !== "$about").map(([k, v]) => `<code>${esc(k)}</code> = <code>${esc(v)}</code>`).join(" · ")}</p></div>`;
-  panel.appendChild(extra);
+  // line heights and tracking, and the aliases a design tool knows the roles by: only what the scale names
+  const lhs = Object.entries(LH).filter(([k]) => k !== "$about"), track = S.scale.tracking || {}, aliases = Object.entries(S.scale.aliases || {}).filter(([k]) => k !== "$about");
+  extra.innerHTML = (lhs.length || track.label ? `<div class="box"><h3>Line heights</h3><p>${lhs.length ? `${lhs.map(([k, v]) => `<b>${esc(k)}</b> ${v}`).join(" · ")}: tighter as text gets bigger.` : ""}${track.label ? ` Labels are tracked ${esc(track.label)}.` : ""}</p></div>` : "") +
+    (aliases.length ? `<div class="box"><h3>Figma aliases</h3><p>${aliases.map(([k, v]) => `<code>${esc(k)}</code> = <code>${esc(v)}</code>`).join(" · ")}</p></div>` : "");
+  if (extra.innerHTML) panel.appendChild(extra);
   update();
 }
 const range = (a, b, st) => { const out = []; for (let v = a; v <= b + 1e-9; v += st) out.push(v); return out; };
@@ -761,7 +774,7 @@ function motionTab(panel) {
   if (S.motionCards) panel.appendChild(render(S.motionCards));
 }
 function responsiveTab(panel) {
-  const m = S.picture.measured;
+  const m = S.picture && S.picture.measured;
   panelHead(panel, "Responsive", `Every size of the page, measured in a browser at every 10px of width (1100 tall) and every 25px of height (1440 wide), ${m ? `on ${m.commit.slice(0, 7)} (${m.engine}, ${m.when.slice(0, 10)}; measured again on every deploy)` : "as the latest round measured it"}. Pick a group; zoom with the slider or Ctrl/⌘ + scroll (a pinch on a trackpad or a touch screen), drag to move; each line is named at its right end with its least and greatest value. Hover a name to pick its line out.`);
   if (S.picture) panel.appendChild(render(S.picture));
   else panel.appendChild(el("p", "note", "Nothing measured yet: the checks measure every size at every width on each deploy of main (site-kit checks)."));
@@ -1111,7 +1124,7 @@ function needsPage() {
 function historyPage() {
   const page = el("div", "page"), H = D.history || [];
   const head = el("header", "head");
-  head.innerHTML = `<div class="eyebrow">History</div><h1>The system, deploy by deploy</h1><p class="lede">${H.length ? `${H.length} deploys of main measured since ${esc(H[0].day)}: what failed and warned, the shares of the system's rules, the weight of a first visit. Kept on the ${repoLink("tree/report-data", "report-data")} branch (a record per deploy, the state and the full measurements).` : "Nothing yet: the history starts with the first deploy of main after the checks were added."}</p>`;
+  head.innerHTML = `<div class="eyebrow">History</div><h1>The system, deploy by deploy</h1><p class="lede">${H.length ? `${H.length} deploys of ${esc(MAIN)} measured since ${esc(H[0].day)}: what failed and warned, the shares of the system's rules, the weight of a first visit. Kept on the ${repoLink("tree/" + DATA, esc(DATA))} branch (a record per deploy, the state and the full measurements).` : `Nothing yet: the history starts with the first deploy of ${esc(MAIN)} after the checks were added.`}</p>`;
   page.appendChild(head);
   if (!H.length) return page;
   const series = (label, f, unit, color) => ({ key: label, label, color, pts: H.map((x, i) => [i + 1, f(x)]).filter((p) => p[1] != null) });
@@ -1130,8 +1143,11 @@ function historyPage() {
    The blocks (layer 3): each block of the page live, the site itself in a frame at a width you pick, and the block's
    latest pictures (site-kit shots), each with its day and marked when a file it is made of has changed since.
    ════════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
-// served under the site (…/report/ of a deploy or a preview), the frame shows this very build; else the live site
-const UNDER_SITE = /^https?:$/.test(location.protocol) && /\/report\/(?:index\.html)?$/.test(location.pathname);
+// served under the site (…/<report path>/ of a deploy or a preview: meta.reportPath, "report" unless the build was told
+// otherwise), the frame shows this very build, at the site's root that many folders up; else the live site
+const REPORT_PATH = (D.meta.reportPath || "report").replace(/^\/+|\/+$/g, "");
+const UNDER_SITE = /^https?:$/.test(location.protocol) && location.pathname.replace(/index\.html$/, "").endsWith("/" + REPORT_PATH + "/");
+const SITE_ROOT = "../".repeat(REPORT_PATH.split("/").filter(Boolean).length || 1);
 const FRAME_SIZES = [[320, 568], [390, 844], [768, 1024], [1024, 768], [1440, 900]];
 const day = (iso) => (iso ? String(iso).slice(0, 10) : "an unknown day");
 function blocksPage(id) {
@@ -1140,7 +1156,7 @@ function blocksPage(id) {
   const taken = list.filter((x) => shotsOf(x).length).length;
   const head = el("header", "head");
   head.innerHTML = `<div class="eyebrow">Blocks</div><h1>Each block, live and in pictures</h1>
-    <p class="lede">The site itself in a frame at the width you pick, at the block${UNDER_SITE ? " (this build, or main)" : SITE.live ? " (the live site: main)" : ""}; under it the block's latest pictures, each with the day it was taken. A picture is marked <span class="pill q">may be out of date</span> when a file the block is made of has changed since. ${taken ? `${taken} of ${list.length} blocks have pictures${D.shots.from === "report-data" ? " (from the report-data branch)" : ""}.` : "No pictures yet: <code>site-kit shots</code> takes them (on main after the checks, or with <code>--all</code>)."}</p>`;
+    <p class="lede">The site itself in a frame at the width you pick, at the block${UNDER_SITE ? " (this build, or main)" : SITE.live ? " (the live site: main)" : ""}; under it the block's latest pictures, each with the day it was taken. A picture is marked <span class="pill q">may be out of date</span> when a file the block is made of has changed since. ${taken ? `${taken} of ${list.length} blocks have pictures${D.shots.from === "report-data" ? ` (from the ${esc(DATA)} branch)` : D.shots.from === "both" ? ` (this run's, the others from the ${esc(DATA)} branch)` : ""}.` : "No pictures yet: <code>site-kit shots</code> takes them (on main after the checks, or with <code>--all</code>)."}</p>`;
   page.appendChild(head);
   if (!list.length) { page.appendChild(el("p", "note", "The adapter lists no blocks (report.blocks in site-kit.config.mjs).")); return page; }
   const b = list.find((x) => x.id === id) || list[0];
@@ -1160,7 +1176,7 @@ function blocksPage(id) {
   const st = Object.assign({ w: 1440, src: UNDER_SITE ? "build" : "live" }, store.get("frame", {}));
   if (!FRAME_SIZES.some(([w]) => w === st.w)) st.w = 1440;
   if (!UNDER_SITE || !SITE.live) st.src = UNDER_SITE ? "build" : "live";
-  const base = () => (st.src === "build" && UNDER_SITE ? "../" : SITE.live);
+  const base = () => (st.src === "build" && UNDER_SITE ? SITE_ROOT : SITE.live);
   live.innerHTML = `<h2>${esc(b.title)}</h2>
     <div class="controls"><div class="seg" role="group" aria-label="Screen width">${FRAME_SIZES.map(([w, h]) => `<button type="button" data-w="${w}" title="${w}×${h}">${w}</button>`).join("")}</div>
       ${UNDER_SITE && SITE.live ? `<div class="seg" role="group" aria-label="Which site"><button type="button" data-src="build">This build</button><button type="button" data-src="live">Main (live)</button></div>` : ""}
@@ -1197,7 +1213,8 @@ function blocksPage(id) {
   const pics = el("section", "sec"); pics.id = "pictures";
   const sh = SH[b.id] || { sizes: [] }, items = shotsOf(b), stale = sh.changed || [];
   pics.innerHTML = `<h2>Pictures</h2>${items.length ? `<p class="sub">Taken ${esc(day(sh.taken))} on ${commit(sh.commit)}. ${stale.length ? `<span class="pill q">may be out of date</span> Since then ${stale.map((f) => `<code>${esc(f)}</code>`).join(", ")} changed.` : "Every file the block is made of is as it was then."}</p>` : `<p class="note">No pictures of this block yet: <code>site-kit shots</code> takes them when its files change (on main), or all of them with <code>--all</code>.</p>`}`;
-  if (items.length) pics.appendChild(B.shots({ items: items.map((s) => ({ src: "blocks/" + s.file, title: `${b.title} · ${s.w}×${s.h}`, text: `${esc(day(sh.taken))}${stale.length ? " · may be out of date" : ""}` })) }));
+  // a picture kept from an older run (the last one could not take that size) has its own day and may be out of date
+  if (items.length) pics.appendChild(B.shots({ items: items.map((s) => ({ src: "blocks/" + s.file, title: `${b.title} · ${s.w}×${s.h}`, text: `${esc(day(s.old ? s.taken : sh.taken))}${stale.length || s.old ? " · may be out of date" : ""}` })) }));
   if ((b.files || []).length) pics.appendChild(el("p", "note", `Made of ${b.files.map((f) => `<code>${esc(f)}</code>`).join(", ")}${b.selector ? ` · on the page: <code>${esc(b.selector)}</code>` : ""}.`));
   page.appendChild(pics);
 
@@ -1214,7 +1231,7 @@ function blocksPage(id) {
 // new tabs of the system: areas measured on the page that had no tab before
 function iconsTab(panel) { panelHead(panel, "Icons and pictures", "The inline icons (size, the stroke as drawn, colour from the text, line-up with their label) and every picture: the file against the device pixels it covers, format, loading, alt. Measured at the 8 screen sizes of the checks; the drawings are left out (they are pictures of the product)."); }
 function componentsTab(panel) { panelHead(panel, "Components and states", "The page's components (classes with __parts, the BEM way), their variants and whether copies look alike; the hover timing of links and buttons."); }
-function behaviourTab(panel) { panelHead(panel, "Behaviour", "The logic of the page as a table of scenarios (given, when, then), each played in a browser on every deploy; how the page holds up without scripts, WebGL or its fonts, in forced colours and with reduced motion; and what it calls before and after the cookie consent."); }
+function behaviourTab(panel) { panelHead(panel, "Behaviour", "The logic of the page as a table of scenarios (given, when, then), each played in a browser on every deploy; how the page holds up without scripts, WebGL or its fonts, in forced colours and with reduced motion; and what it calls before and after consent (for a site that asks for it)."); }
 function healthTab(panel) { panelHead(panel, "Page health", "Every page of the site: titles, descriptions, the outline, links, files a browser or a search engine asks for, sideways scroll, script errors, and the weight of a first visit against the last deploy. Also the code's own rules (no CSS swallowed by a comment, every token used) are under Grammar."); }
 
 /* ════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1229,7 +1246,7 @@ nav.innerHTML = `<a href="#needs" data-page="needs"><span>What needs you${openN 
   <a href="#history" data-page="history">History<small>every deploy of main, measured</small></a>
   ${D.rounds.length ? '<div class="side__group" id="rounds-h">Rounds</div>' : ""}
   ${D.rounds.map((r) => `<a href="#round-${r.n}" data-page="round-${r.n}">Round ${r.n} · ${esc(r.date)}<small>${esc(r.title.replace(/^Round \d+:\s*/, ""))}</small></a>`).join("")}`;
-$("#side-foot").innerHTML = `Built ${esc(D.meta.built)} from ${esc(D.meta.ref || "main")} at ${commit(D.meta.head)}.${C ? `<br>Checks of ${commit(C.commit)}${C.own || C.from === "this build" ? "" : ` (${esc(C.from)})`} · <a href="state.json">state.json</a>` : ""}<br>Made by <a href="https://github.com/timofeylebedev/site-kit">site-kit</a> report`;
+$("#side-foot").innerHTML = `Built ${esc(D.meta.built)} from ${esc(D.meta.ref || MAIN)} at ${commit(D.meta.head)}.${C ? `<br>Checks of ${commit(C.commit)}${C.own || C.from === "this build" ? "" : ` (${esc(C.from)})`} · <a href="state.json">state.json</a>` : ""}<br>Made by <a href="https://github.com/timofeylebedev/site-kit">site-kit</a> report`;
 const side = $("#side"), scrim = $("#scrim"), menuBtn = $("#menu-open");
 const narrow = matchMedia("(width < 900px)");
 const openMenu = (on) => {

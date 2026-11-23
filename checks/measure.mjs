@@ -13,12 +13,11 @@
 //   scenarios  the logic table of checks.scenarios
 //   pages      every page: head, outline, anchors, links, sideways scroll; robots.txt, sitemap.xml, the manifest
 //   weight     the bytes of a first visit by kind (as sent: Brotli for text)
-import { createServer } from "node:http";
-import { readFile, stat } from "node:fs/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, extname, dirname } from "node:path";
+import { join, dirname } from "node:path";
 import { brotliCompressSync } from "node:zlib";
-import { siteIO, options } from "../lib/config.mjs";
+import { siteIO, options, env } from "../lib/config.mjs";
+import { serve } from "../lib/serve.mjs";
 
 export const DEFAULTS = {
   // what the sweep hides: canvases make every resize slow (WebGL) and say nothing about the layout
@@ -39,9 +38,9 @@ export const consentVersion = (cfg, io) => {
 };
 
 export async function measure(cfg, args = []) {
-  const io = siteIO(cfg), opt = options(args), C = { ...DEFAULTS, ...cfg.checks };
+  const io = siteIO(cfg), opt = options(args, ["engine", "only", "out"]), C = { ...DEFAULTS, ...cfg.checks };
   const DIST = io.abs(cfg.paths.dist);
-  const ENGINE = opt("engine", process.env.SITE_KIT_ENGINE || process.env.FM_ENGINE || "chromium");
+  const ENGINE = opt("engine", env("ENGINE") || "chromium");
   const QUICK = !!opt("quick", false);
   // --only sweep,sizes,…: only these steps (for working on the checks)
   const ONLY = typeof opt("only") === "string" ? opt("only").split(",") : null;
@@ -53,22 +52,10 @@ export async function measure(cfg, args = []) {
   if (!io.exists(join(cfg.paths.dist, "index.html"))) { console.error(`measure: no ${cfg.paths.dist}/index.html — build the site first`); return 2; }
   const playwright = await import("playwright");
 
-  // ── the built site, served as GitHub Pages serves it (addresses without .html; 404.html for anything missing) ──
-  const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".webp": "image/webp", ".avif": "image/avif",
-    ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".json": "application/json", ".ico": "image/x-icon", ".txt": "text/plain", ".xml": "application/xml", ".webmanifest": "application/manifest+json",
-    ".mp4": "video/mp4", ".webm": "video/webm", ".glb": "model/gltf-binary" };
-  const isFile = async (f) => { try { return (await stat(f)).isFile(); } catch { return false; } };
-  const server = createServer(async (req, res) => {
-    const p = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    let file = join(DIST, p), status = 200;
-    if (p.endsWith("/")) file = join(file, "index.html");
-    else if (!(await isFile(file)) && (await isFile(file + ".html"))) file += ".html";
-    if (!(await isFile(file))) { file = join(DIST, "404.html"); status = 404; }
-    const body = await readFile(file).catch(() => Buffer.from("not found"));
-    res.writeHead(status, { "content-type": TYPES[extname(file)] || "application/octet-stream" }); res.end(body);
-  });
-  await new Promise((ok) => server.listen(0, ok));
-  const URL0 = `http://localhost:${server.address().port}/`;
+  // ── the built site, served as GitHub Pages serves it (lib/serve.mjs: addresses without .html; 404.html for anything
+  // missing; 127.0.0.1 only, never outside dist) ──
+  const server = await serve(DIST);
+  const URL0 = server.url;
 
   // ── the browser ──
   const chromium = ENGINE === "chromium";
@@ -111,9 +98,9 @@ export async function measure(cfg, args = []) {
   const git = (...a) => io.tryGit(...a)?.trim() || null;
   const record = {
     schema: 1, site: cfg.name, engine: ENGINE, version, quick: QUICK, when: new Date().toISOString(),
-    commit: (process.env.SITE_KIT_SHA || process.env.FM_HEAD_SHA || process.env.GITHUB_SHA || git("rev-parse", "HEAD") || "").slice(0, 40),
+    commit: (env("SHA") || process.env.GITHUB_SHA || git("rev-parse", "HEAD") || "").slice(0, 40),
     ref: process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || git("rev-parse", "--abbrev-ref", "HEAD"),
-    pr: process.env.SITE_KIT_PR || process.env.FM_PR || null, at: {}, timings: {},
+    pr: env("PR") || null, at: {}, timings: {},
   };
   const step = async (name, fn) => { if (ONLY && !ONLY.includes(name)) return; const s = Date.now(); try { await fn(); } catch (e) { record.errors = [...(record.errors || []), `${name}: ${String(e.message || e).split("\n")[0]}`]; log(`${name} FAILED: ${e.message}`); } record.timings[name] = Math.round((Date.now() - s) / 1000); log(`${name} done`); };
 
@@ -279,7 +266,7 @@ export async function measure(cfg, args = []) {
       await ctx.close();
     });
   } finally {
-    await browser.close().catch(() => {}); server.close();
+    await browser.close().catch(() => {}); await server.close();
   }
 
   record.seconds = Math.round((Date.now() - t0) / 1000);

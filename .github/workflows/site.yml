@@ -3,6 +3,8 @@
 # - Every pull request is published as a preview in pr-preview/pr-<number>/. The link is posted as a comment on the
 #   pull request, updated on every push, and the preview is removed when the pull request is merged or closed
 #   (rossjrw/pr-preview-action). Pull requests from forks build but are not published (their token cannot push).
+# - The code's rules (`site-kit rules --strict`, seconds): their failures go into the run's summary; they stop the
+#   deploy only with the input rules-strict (a site turns it on once its open findings are decided).
 # - The review page (`site-kit report`, from the code only: tokens, roles, steps, decisions, questions, the code's
 #   rules; measurements read from the report-data branch) goes to <report-path>/ beside the site. It never stops the
 #   site: if it cannot be built, the copy published last is put back.
@@ -59,6 +61,10 @@ on:
         description: where the review page is published (relative to the site's root)
         type: string
         default: report
+      rules-strict:
+        description: stop the deploy when a code rule fails (site-kit rules --strict); off, the failures are only listed in the summary
+        type: boolean
+        default: false
       runs-on:
         description: the runner (no browser is needed here)
         type: string
@@ -73,6 +79,8 @@ jobs:
     env:
       SITE_KIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SITE_KIT_PR: ${{ github.event.pull_request.number }}
+      SITE_KIT_MAIN: ${{ inputs.main-branch }}
+      SITE_KIT_REPORT_PATH: ${{ inputs.report-path }}
     steps:
       - uses: actions/checkout@v4
 
@@ -89,6 +97,28 @@ jobs:
         run: ${{ inputs.build }}
       - if: github.event.action != 'closed' && inputs.check != ''
         run: ${{ inputs.check }}
+
+      # the code's rules (the kit's design rules, the lessons, the site's own): listed in the summary; a failure stops
+      # the deploy only with rules-strict
+      - name: The code's rules
+        if: github.event.action != 'closed'
+        env:
+          STRICT: ${{ inputs.rules-strict }}
+        run: |
+          set +e; npx --no-install site-kit rules --strict > "$RUNNER_TEMP/rules.txt" 2>&1; code=$?; set -e
+          tail -n 1 "$RUNNER_TEMP/rules.txt"
+          {
+            echo "### Code rules"; echo
+            echo '```'
+            tail -n 1 "$RUNNER_TEMP/rules.txt"
+            awk '/^(FAIL|ERR )/{p=1;print;next} /^(ok  |$)/{p=0} p' "$RUNNER_TEMP/rules.txt" | head -n 200
+            echo '```'
+            if [ $code != 0 ] && [ "$STRICT" != true ]; then echo; echo "Not stopping the deploy: the input rules-strict is off."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ $code != 0 ]; then
+            echo "::warning title=Code rules::$(tail -n 1 "$RUNNER_TEMP/rules.txt")"
+            if [ "$STRICT" = true ]; then exit 1; fi
+          fi
 
       # the review page from the code (layer 1, seconds, no browser); never stops the site's deploy
       - name: Build the review page

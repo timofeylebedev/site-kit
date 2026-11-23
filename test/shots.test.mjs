@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { whatChanged, staleFiles, mergeShots, parseSizes, fingerprints } from "../shots/index.mjs";
+import { whatChanged, staleFiles, mergeShots, parseSizes, fingerprints, entryOf, freshFile } from "../shots/index.mjs";
 import { siteIO } from "../lib/config.mjs";
 
 const entry = { files: { "a.css": "111", "b.js": "222" }, taken: "2026-11-01T00:00:00Z", commit: "c1", sizes: [{ w: 390, h: 844, file: "x/390x844.jpg" }, { w: 1440, h: 900, file: "x/1440x900.jpg" }] };
@@ -34,11 +34,37 @@ test("staleFiles: the files whose fingerprint differs now", () => {
   assert.deepEqual(staleFiles(null, { "a.css": "1" }), ["a.css"]);
 });
 
+const pic = (w, h, id = "hero") => ({ w, h, file: `${id}/${w}x${h}.jpg` });
+
 test("mergeShots: a block shot now replaces its entry; the others stay; blocks gone from the adapter are dropped", () => {
-  const kept = { blocks: { nav: { taken: "old" }, hero: { taken: "old" }, gone: { taken: "old" } } };
-  const fresh = { commit: "c2", blocks: { hero: { taken: "new" } } };
-  assert.deepEqual(mergeShots(kept, fresh, ["nav", "hero"]), { commit: "c2", blocks: { nav: { taken: "old" }, hero: { taken: "new" } } });
-  assert.deepEqual(mergeShots(null, fresh).blocks, { hero: { taken: "new" } });
+  const kept = { blocks: { nav: { taken: "old", sizes: [pic(390, 844, "nav")] }, hero: { taken: "old", sizes: [pic(390, 844)] }, gone: { taken: "old" } } };
+  const fresh = { commit: "c2", upToDate: { nav: "old" }, blocks: { hero: { taken: "new", sizes: [pic(390, 844)] } } };
+  assert.deepEqual(mergeShots(kept, fresh, ["nav", "hero"]), { commit: "c2", blocks: { nav: kept.blocks.nav, hero: fresh.blocks.hero } });
+  assert.deepEqual(mergeShots(null, fresh).blocks, { hero: fresh.blocks.hero });
+});
+
+test("a block missed at every size: no entry, the kept one and its pictures stay, and it is tried again", () => {
+  const kept = { blocks: { hero: { files: { "a.css": "111" }, taken: "old", commit: "c1", sizes: [pic(390, 844), pic(1440, 900)] } } };
+  const r = { sizes: [], missed: [{ w: 390, h: 844, why: "not on the page" }, { w: 1440, h: 900, why: "not on the page" }] };
+  assert.equal(entryOf({ files: { "a.css": "222" }, taken: "new" }, r), null);
+  // an older run wrote such a block with sizes: [] — it does not replace the kept entry either
+  assert.deepEqual(mergeShots(kept, { blocks: { hero: { files: { "a.css": "222" }, taken: "new", sizes: [] } } }).blocks.hero, kept.blocks.hero);
+  assert.deepEqual(mergeShots(kept, { blocks: {}, missed: { hero: r.missed } }).blocks.hero, kept.blocks.hero);
+  assert.deepEqual(whatChanged(kept.blocks.hero, { "a.css": "222" }, ["390x844", "1440x900"]), ["a.css changed"]);
+});
+
+test("a size that failed: left out of `missed` (tried again), its kept picture stays marked old; a hidden size is not asked again", () => {
+  const kept = { blocks: { hero: { files: { "a.css": "111" }, taken: "old", commit: "c1", sizes: [pic(390, 844), pic(1440, 900), pic(768, 1024)] } } };
+  const r = { sizes: [{ ...pic(390, 844), bytes: 1 }], missed: [{ w: 1440, h: 900, why: "page.goto: Timeout 30000ms exceeded" }, { w: 768, h: 1024, why: "not shown at this size" }] };
+  const e = entryOf({ files: { "a.css": "222" }, taken: "new", commit: "c2" }, r);
+  assert.deepEqual(e.missed, [{ w: 768, h: 1024, why: "not shown at this size" }]);
+  const m = mergeShots(kept, { blocks: { hero: e } }).blocks.hero;
+  assert.deepEqual(m.sizes.map((s) => [s.file, !!s.old, s.taken || null]), [["hero/390x844.jpg", false, null], ["hero/1440x900.jpg", true, "old"]]);
+  // next run: the failed size is asked for again (its picture is old), the hidden one is not
+  assert.deepEqual(whatChanged(m, { "a.css": "222" }, ["390x844", "1440x900", "768x1024"]), ["no picture at 1440x900"]);
+  assert.equal(freshFile({ blocks: { hero: e } })("hero", "hero/390x844.jpg"), true);
+  assert.equal(freshFile({ blocks: { hero: e } })("hero", "hero/1440x900.jpg"), false);
+  assert.equal(freshFile(null)("hero", "hero/390x844.jpg"), false);
 });
 
 test("parseSizes", () => {

@@ -4,14 +4,14 @@
 //   site-kit checks state              [--record <file>] [--webkit <file>] [--prev <state>] [--prev-record <record>] [--out <file>]
 //   site-kit checks keep               [--pr <n>] | --forget <n>
 //   site-kit checks answer             <id> "<answer>" ["note"] | <id> --drop "why" | <id> --reopen | "<tag> answer · <id>: <answer>"
-// Env: SITE_KIT_SHA (else FM_HEAD_SHA, GITHUB_SHA, git HEAD) the commit measured; SITE_KIT_PR (else FM_PR) the pull
-// request; SITE_KIT_ENGINE (else FM_ENGINE) the engine; PLAYWRIGHT_CHROMIUM a Chromium to use.
+// Env (lib/env.mjs): SITE_KIT_SHA (else GITHUB_SHA, git HEAD) the commit measured; SITE_KIT_PR the pull request;
+// SITE_KIT_ENGINE the engine; SITE_KIT_MAIN the live branch; PLAYWRIGHT_CHROMIUM a Chromium to use.
 const HELP = `site-kit checks [measure|state|keep|answer|help]
 
   (nothing)   measure in Chromium, then state
   measure     [--engine chromium|webkit] [--quick] [--only sweep,sizes,modes,privacy,scenarios,pages,weight] [--out file]
   state       [--record file] [--webkit file] [--prev state.json] [--prev-record record.json] [--out file]
-  keep        [--pr <n>] | --forget <n>     the record and state onto the report-data branch (CI)
+  keep        [--pr <n>] | --forget <n>     the record and state onto the data branch (checks.dataBranch; CI)
   answer      <id> "<answer>" ["note"] | <id> --drop "why" | <id> --reopen | "<tag> answer · <id>: <answer> — <note>"`;
 
 export async function run(args, cfg) {

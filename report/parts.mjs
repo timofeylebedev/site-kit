@@ -255,28 +255,34 @@ export function typesetRules(readme) {
  * commit it measured; `head` the commit being built; `ref` the branch being built.
  * → { from, whose, own }
  */
-export function whoseState({ local, commit = "", head = "", ref = "" }) {
+export function whoseState({ local, commit = "", head = "", ref = "", main = "main" }) {
   const c = commit.slice(0, 7), h = head.slice(0, 7);
   const own = !!(c && h && c === h);
   if (local) return own ? { from: "this build", whose: `measured on this commit (${c})`, own }
     : { from: `a local run of ${c || "an unknown commit"}`, whose: `measured in a local run on ${c || "an unknown commit"}, not on this commit (${h})`, own };
-  const onMain = !ref || ref === "main";
-  return { from: "the last deploy of main", whose: own ? `measured on this commit (${c})` : onMain ? `measured on main at ${c}, an earlier commit than this one (${h})` : `measured on main at ${c}, before this change (${ref} at ${h})`, own };
+  const onMain = !ref || ref === main;
+  return { from: `the last deploy of ${main}`, whose: own ? `measured on this commit (${c})` : onMain ? `measured on ${main} at ${c}, an earlier commit than this one (${h})` : `measured on ${main} at ${c}, before this change (${ref} at ${h})`, own };
 }
 
 // ── pictures of the blocks (layer 3) ─────────────────────────────────────────────────────────────────────────────────
 /**
  * The pictures of the blocks for the page: the adapter's blocks, each with its latest pictures (if any) and the files
- * that changed since they were taken. `index`: shots/index.json; `hashNow(path)`: the file's git blob sha now.
+ * that changed since they were taken. `index`: shots/index.json (the kept one with this run's put in: mergeShots);
+ * `hashNow(path)`: the file's git blob sha now; `isFresh(id, file)`: whether a picture is this run's (from: "local", in
+ * the checks' out folder) or kept (from: "data", on the data branch). A picture kept from an older run because the last
+ * one could not take it (`old`) has its own date and counts as possibly out of date.
  */
-export function blockShots(blocks = [], index, hashNow) {
+export function blockShots(blocks = [], index, hashNow, isFresh = () => false) {
   const out = {};
   for (const b of blocks) {
     const e = index?.blocks?.[b.id];
     if (!e) { out[b.id] = { sizes: [] }; continue; }
     const changed = Object.entries(e.files || {}).filter(([p, sha]) => hashNow(p) !== sha).map(([p]) => p);
     out[b.id] = { taken: e.taken || null, commit: e.commit || null, changed,
-      sizes: (e.sizes || []).map((s) => ({ w: s.w, h: s.h, file: String(s.file).replace(/^shots\//, "") })) };
+      sizes: (e.sizes || []).map((s) => {
+        const file = String(s.file).replace(/^shots\//, "");
+        return { w: s.w, h: s.h, file, from: isFresh(b.id, s.file) ? "local" : "data", ...(s.old ? { old: true, taken: s.taken || null } : {}) };
+      }) };
   }
   return out;
 }

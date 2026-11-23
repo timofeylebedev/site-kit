@@ -9,7 +9,7 @@ site-kit shots                      # every block (same as --all)
 site-kit shots --changed            # only blocks whose files differ from their last kept pictures
 site-kit shots --blocks hero,nav    # only these blocks
 site-kit shots --sizes 390x844,1440x900 --out some/dir --max-width 1000
-site-kit shots --changed --base origin/report-data   # where the kept index is (a git ref; the default)
+site-kit shots --changed --base origin/report-data   # where the kept index is (a git ref; default: origin/<checks.dataBranch>)
 ```
 
 Run it after the build (`paths.dist`). Headless Chromium (`PLAYWRIGHT_CHROMIUM` picks the binary).
@@ -30,7 +30,7 @@ Run it after the build (`paths.dist`). Headless Chromium (`PLAYWRIGHT_CHROMIUM` 
 
 - `<paths.out>/shots/<id>/<w>x<h>.jpg` (frames: `<w>x<h>.jpg`, `<w>x<h>-2.jpg`, …)
 - `<paths.out>/shots/index.json`:
-  `{ generated, commit, mode, sizes, upToDate: { id: taken }, blocks: { <id>: { title, page, selector, files: { path: blobSha }, taken, commit, sizes: [{ w, h, file, css: { w, h }, bytes, frame?, at? }], missed?: [{ w, h, why }] } } }`
+  `{ generated, commit, mode, sizes, upToDate: { id: taken }, missed?: { <id>: [{ w, h, why }] }, blocks: { <id>: { title, page, selector, files: { path: blobSha }, taken, commit, sizes: [{ w, h, file, css: { w, h }, bytes, frame?, at?, old?, taken? }], missed?: [{ w, h, why }] } } }`
   Only the blocks shot by this run are in `blocks`; `upToDate` lists the ones `--changed` left alone.
 
 `index.mjs` has the pure parts for the other tools: `fingerprints(io, files)`, `whatChanged(entry, now, sizes)`,
@@ -39,7 +39,7 @@ now replaces its entry and its folder; blocks gone from the adapter are dropped)
 
 ## How a page is pictured (and why)
 
-- **Served as GitHub Pages serves it** (`serve.mjs`: no ".html" in addresses, 404.html for anything missing), with
+- **Served as GitHub Pages serves it** (`lib/serve.mjs`, shared with the checks and the audit: no ".html" in addresses, 404.html for anything missing, 127.0.0.1 only), with
   the adapter's `checks.query` and `checks.unstyle`: the pictures show the page the checks measured.
 - **Other hosts answered with nothing** (204): nothing leaves the machine; no analytics, no third-party frames.
 - **Reduced motion**, and `animations: "disabled"` for the picture: reveals and entrances settle at once, so a
@@ -58,13 +58,18 @@ now replaces its entry and its folder; blocks gone from the adapter are dropped)
 - **Only a block's own files** are its fingerprint: a change to shared files (tokens, base styles, the page's HTML)
   does not mark every picture stale. Take all again with `--all` (CI: the manual run's `shots: all`) after such a
   change, or at a round's end.
-- **Never fails the build**: a block that is not found or not shown at a size is listed under `missed`; the command
-  exits non-zero only when it cannot run (no build, an unknown block).
+- **Never fails the build**: the command exits non-zero only when it cannot run (no build, an unknown block).
+- **A miss never loses a picture.** A block found at no size gets no entry (it is listed under the index's own
+  `missed`): its kept entry and pictures stay, and since its files still differ the next `--changed` run tries it
+  again. A size the block is hidden at by design ("not shown at this size", "no size at this size") goes into the
+  entry's `missed` and is not asked for again until the block's files change; a size that failed for another reason
+  (an error, a time-out) is left out, so it is tried again, and its kept picture stays meanwhile, marked `old` with its
+  own date (`mergeShots`, `entryOf` in index.mjs; `keep` leaves such files in the block's folder).
 
 ## In CI (`.github/workflows/checks.yml`)
 
-- main: `site-kit shots --changed` after the checks; `site-kit checks keep` puts the pictures on the report-data
-  branch (`shots/<id>/…`, `shots/index.json` merged with `mergeShots`).
+- main: `site-kit shots --changed` after the checks; `site-kit checks keep` puts the pictures on the data branch
+  (`checks.dataBranch`, default report-data) (`shots/<id>/…`, `shots/index.json` merged with `mergeShots`).
 - a pull request with the label `shots`: `site-kit shots --changed` (against main's pictures) into its preview's
   review page only; nothing is kept.
 - the manual run's input `shots: all`: every block again.

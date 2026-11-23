@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { siteIO, options } from "../lib/config.mjs";
 import { measuredRules, KINDS, STEP_OF } from "./measured.mjs";
-import { sourceRules } from "./source.mjs";
+import { sourceRules, selectorIn } from "./source.mjs";
 
 export const SEV = { error: 4, fail: 3, warn: 2, pass: 0, info: 0 };
 
@@ -26,6 +26,9 @@ export function palette(cfg, io) {
 // above it would make it «fixed» and «new» again), and says which CSS rule it is in, so a decision can name it
 export function codeRules(results, selectorAt = () => null) {
   return results.map((r) => {
+    // a rule that could not run (its module failed to load or threw): an error, so its last findings are carried
+    if (r.error) return { id: "code." + r.id, area: r.area, kind: "hard", title: r.title, how: `${r.how} (read from the code).`, status: "error", value: null, unit: "places", note: r.note,
+      items: [{ key: "error", where: r.area || "Code", what: `could not run: ${r.error}` }] };
     const seen = new Map();
     return { id: "code." + r.id, area: r.area, kind: "hard", title: r.title, how: `${r.how} (read from the code).`, status: r.ok ? "pass" : "fail", value: r.n, unit: "places", note: r.note,
       items: r.fails.map((f) => {
@@ -37,15 +40,14 @@ export function codeRules(results, selectorAt = () => null) {
   });
 }
 
-/** the selector of the CSS rule a line is in (for a code finding in a stylesheet) */
+/** the selector of the CSS rule a line is in (for a code finding in a stylesheet; the same as a decision's `selectors`
+ *  are matched against: source.mjs selectorIn) */
 export function selectorFinder(io) {
   const cache = new Map();
   return (file, line) => {
     if (!/\.css$/.test(file)) return null;
     if (!cache.has(file)) cache.set(file, io.exists(file) ? io.read(file).split("\n") : []);
-    const lines = cache.get(file);
-    for (let i = Math.min(line, lines.length) - 1; i >= 0; i--) { const m = lines[i].match(/^\s*([^{}/@][^{}]*?)\s*\{/); if (m) return m[1].trim().slice(0, 60); if (/^\s*\}/.test(lines[i]) && i < line - 1) return null; }
-    return null;
+    return selectorIn(cache.get(file), line);
   };
 }
 
@@ -70,11 +72,14 @@ export function joinState({ rules, rec, webkit = null, wkRules = null, prev = nu
   // WebKit (Playwright's build, the engine of Safari): its result beside Chromium's, and its own failures added. A missing
   // WebKit record keeps the last one's WebKit items (marked so), rather than calling them fixed.
   if (webkit && wkRules) {
-    const wkFailed = new Set((webkit.errors || []).map((e) => e.split(":")[0]));
+    const wkFailed = new Map((webkit.errors || []).map((e) => [e.split(":")[0], e]));
     for (const w of wkRules) {
       const r = rules.find((x) => x.id === w.id); if (!r || r.status === "error") continue;
       const step = STEP_OF(w.id);
-      if (step && (wkFailed.has(step) || !(webkit.timings && step in webkit.timings))) continue;   // not measured in WebKit
+      // a step that failed in WebKit: its rules could not run there (said beside Chromium's result, which stands: only
+      // the first engine's errors make a run broken, checks/keep.mjs); a step a quick run leaves out: not measured there
+      if (step && wkFailed.has(step)) { r.webkit = { status: "error", value: null, why: wkFailed.get(step) }; continue; }
+      if (step && !(webkit.timings && step in webkit.timings)) continue;
       r.webkit = { status: w.kind === "inventory" ? "info" : w.status, value: w.value, on: w.on, total: w.total };
       Object.defineProperty(r, "wkItems", { value: w.items, enumerable: false });     // for the decisions, not written
       if (SEV[r.webkit.status] > SEV[r.status]) {
@@ -189,7 +194,7 @@ export function joinState({ rules, rec, webkit = null, wkRules = null, prev = nu
 }
 
 export async function state(cfg, args = []) {
-  const io = siteIO(cfg), opt = options(args);
+  const io = siteIO(cfg), opt = options(args, ["out", "record", "webkit", "prev", "prev-record"]);
   const readJson = (p) => (typeof p === "string" && io.exists(p) ? JSON.parse(io.read(p)) : null);
   const OUT = io.abs(opt("out", join(cfg.paths.out, "state.json")));
   const rec = readJson(opt("record", join(cfg.paths.out, "record-chromium.json")));
