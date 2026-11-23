@@ -136,6 +136,30 @@ outside the scroll module; every WebGL context asks for `failIfMajorPerformanceC
 bare `addEventListener("load", …)` (use `whenLoaded`); the start-up waits for stylesheets; anything that loads a
 third party starts from consent. A site turns one off only with a decision in decisions.json that names it.
 
+## Code rules: one shape
+
+`checks/source.mjs` exports `sourceRules(cfg) → { results: [{ id, area, title, how, ok, n, fails, note }] }`, where
+each fail is a string `"<file>:<line> <what>"` (file relative to the site's root). It builds one context and runs, in
+order, the kit's generic design rules, the lessons (`rules/learnings.mjs`: `learningRules(ctx) → [rule…]`) and the
+site's own (`cfg.rules.code(ctx) → [rule…]`); a rule there is `{ id, area, title, how, fails, note? }` (`ok` and `n`
+are filled in). The context:
+
+```js
+ctx = {
+  cfg, io,                       // the adapter and siteIO(cfg)
+  css: { "<path>": text },       // every stylesheet under paths.styles
+  js: { "<path>": text },        // every script under paths.scripts
+  html: { "<path>": text },      // every page source: *.html under paths.pages (default: the folder above paths.styles)
+  scale, decisions,              // parsed paths.scale and paths.decisions (.decisions)
+  strip(cssText), stripJs(jsText),   // comments blanked, line numbers kept
+  lineOf(text, index),
+  allowed(ruleId, file) → decision | null,   // a decision whose `rules` field names this rule for this file:
+                                             // "rules": [{ "rule": "learn.window-scroll", "files": "<regex>" }]
+}
+```
+
+`site-kit rules` prints them all (`--strict`: exit 1 when one fails; CI runs it on every PR, it takes a second).
+
 ## Working rules for the parts
 
 - Behaviour first: on Flow Medium the kit must give the same results as FM's own copies did (same rules, same
