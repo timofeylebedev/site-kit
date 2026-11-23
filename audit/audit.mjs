@@ -234,7 +234,13 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
           if (S.axeStyle) await page.addStyleTag({ content: S.axeStyle });
           await page.addScriptTag({ content: AXE });
           const res = await page.evaluate(async () => { const r = await axe.run(document, { resultTypes: ["violations"] }); return { v: r.violations.map((x) => ({ id: x.id, nodes: x.nodes.map((n) => n.target.join(" ")) })), contrast: r.passes.some((x) => x.id === "color-contrast") || r.violations.some((x) => x.id === "color-contrast") }; });
-          if (!res.contrast) failures.push(`${tag}: axe could not check the contrast of any text (a layer it cannot see through?)`);
+          if (!res.contrast) {
+            // a page that opens with a modal over it (a dialog stands open from the start) may be kept as designed:
+            // an exception with audit.noContrast, a regex of the page's path
+            const a = EXCEPTIONS.find((d) => d.audit?.noContrast && new RegExp(d.audit.noContrast).test(pg.path || ""));
+            if (a) note(a.id, `${tag}: axe checked the contrast of no text`);
+            else failures.push(`${tag}: axe could not check the contrast of any text (a layer it cannot see through?)`);
+          }
           for (const x of res.v) for (const t of x.nodes) {
             const a = ACCEPTED.find((a) => a.rule === x.id && a.target.test(t));
             if (!a) failures.push(`${tag}: axe ${x.id}: ${t}`);
@@ -262,7 +268,7 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
             const line = `${tag}: «${r.text}» ${r.median.toFixed(2)} : 1 over the canvas (needs ${r.need})`;
             if (r.owner) note(r.owner, line); else failures.push(`text over a canvas: ${line}`);
           }
-          log(`${tag}: text over canvases: ${measured} of ${n} measured (the others are outside the screen or a clipping window)`);
+          if (S.canvases) log(`${tag}: text over canvases: ${measured} of ${n} measured (the others are outside the screen or a clipping window)`);
         }
         log(`${tag}: ${overflow ? "sideways scroll" : "ok"}; ${found.clipped.size} cut, ${found.small.size} small, ${found.targets.size} targets`);
         await ctx.close();

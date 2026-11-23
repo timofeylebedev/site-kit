@@ -34,7 +34,11 @@ it is measured and printed under "Kept as designed" on every run, so it stays in
 ```json
 "audit": { "axe": "color-contrast", "target": "\\.stat__label" }      // an axe rule on matching targets
 "audit": { "pixels": [".cta__lead"] }                                   // text over a canvas, by selector
+"audit": { "noContrast": "^account/beans/$" }                           // a page where axe checks no text's contrast
 ```
+
+(axe checking the contrast of no text at all fails a page: a layer it cannot see through hides every background. A
+page that opens with a modal dialog over it can be such a page on purpose.)
 
 ## The adapter: `audit`
 
