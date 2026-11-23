@@ -40,6 +40,18 @@ export const consentVersion = (cfg, io) => {
 /** the addresses measured at the full sizes: the home page, then every page marked `measure: true` (README.md) */
 export const measuredPages = (pages = [], base, q = "") => [base + q, ...pages.filter((p) => p.measure && !p.main && p.path).map((p) => base + p.path + q)];
 
+/** a snapshot of a page other than the home page, its places named with the page's path ("catalog/ .card__name"), so a
+ *  finding there says on which page it is and a decision can bind to it (an unanchored `match` still finds the class) */
+export function tagShot(shot, path) {
+  if (!path) return shot;
+  const at = (w) => `${path} ${w}`;
+  const item = (x) => (x && typeof x === "object" ? { ...x, ...(Array.isArray(x.where) ? { where: x.where.map(at) } : {}), ...(typeof x.sel === "string" ? { sel: at(x.sel) } : {}) } : x);
+  const out = { ...shot };
+  for (const [k, v] of Object.entries(shot)) if (Array.isArray(v) && k !== "components") out[k] = v.map(item);
+  if (shot.edges) out.edges = { ...shot.edges, near: (shot.edges.near || []).map(item) };
+  return out;
+}
+
 export async function measure(cfg, args = []) {
   const io = siteIO(cfg), opt = options(args, ["engine", "only", "out"]), C = { ...DEFAULTS, ...cfg.checks };
   const DIST = io.abs(cfg.paths.dist);
@@ -139,16 +151,18 @@ export async function measure(cfg, args = []) {
       for (const s of C.sizes) {
         const shots = [], errors = [];
         let n = 0;
-        for (const address of MEASURED) {
+        for (const [i, address] of MEASURED.entries()) {
+          // the home page as it always was; another page's places and errors carry its path
+          const path = i ? address.slice(URL0.length, Q ? -Q.length : undefined) : "";
           const ctx = await context(browser, s), page = await ctx.newPage();
-          await offline(ctx); page.on("pageerror", (e) => errors.push(String(e.message || e).slice(0, 200)));
+          await offline(ctx); page.on("pageerror", (e) => errors.push((path ? path + ": " : "") + String(e.message || e).slice(0, 200)));
           await page.emulateMedia({ reducedMotion: "reduce" });
           await page.goto(address, { waitUntil: "load" }); await wait(page, 900); await warm(page);
           await withCollector(page);
           // what shows only in view (cards that come in, pinned blocks) is measured where it shows: at the top of every
           // section, and a screen at a time through the ones taller than the screen; the snapshots are joined
           const stops = await page.evaluate(([h, sel]) => { const ys = new Set([0]); for (const e of document.querySelectorAll(sel)) { const r = e.getBoundingClientRect(), top = r.top + scrollY; ys.add(Math.max(0, Math.round(top - 80))); for (let y = top + h; y < top + r.height - h / 2; y += h) ys.add(Math.round(y)); } return [...ys].sort((a, b) => a - b); }, [s.h, C.sections]);
-          for (const y of stops) { await page.evaluate((y) => scrollTo(0, y), y); await wait(page, 450); shots.push(await page.evaluate(async (c) => await window.__dsCollect(c), collectCfg)); }
+          for (const y of stops) { await page.evaluate((y) => scrollTo(0, y), y); await wait(page, 450); shots.push(tagShot(await page.evaluate(async (c) => await window.__dsCollect(c), collectCfg), path)); }
           n += stops.length;
           await ctx.close();
         }

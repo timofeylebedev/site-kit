@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { settings, serve, SIZES } from "../audit/audit.mjs";
+import { settings, serve, SIZES, seed, noContrastFor } from "../audit/audit.mjs";
 
 test("settings: defaults, and the adapter's audit section over them", () => {
   const d = settings({ checks: { pages: [{ path: "" }, { path: "about" }, { path: "nope", status: 404 }] } });
@@ -35,6 +35,28 @@ test("settings: a shop's audit (QQ): its own text boxes, a bag in the browser, i
   assert.equal(qq.canvases, null, "null turns the pixel contrast off");
   // the probe goes into the page as its source: an arrow function survives that
   assert.deepEqual(new Function(`return (${qq.probe.toString()})()`)(), ["navbar: too tight"]);
+});
+
+test("noContrastFor: a page kept without contrast only by an exception whose regex finds its path", () => {
+  const ex = [{ id: "plain", audit: { axe: "color-contrast", target: "\\.x" } }, { id: "beans", audit: { noContrast: "^account/beans/$" } }, { id: "text", audit: "a plain note" }];
+  assert.equal(noContrastFor(ex, "account/beans/")?.id, "beans");
+  assert.equal(noContrastFor(ex, "account/"), null);
+  assert.equal(noContrastFor(ex, ""), null, "the home page");
+  assert.equal(noContrastFor(ex, undefined), null);
+  assert.equal(noContrastFor([], "account/beans/"), null);
+});
+
+test("seed: audit.storage put in only where nothing is stored, strings as they are, the rest as JSON", () => {
+  const store = new Map([["kept", "mine"]]);
+  globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+  try {
+    seed({ kept: "theirs", bag: [{ slug: "x", qty: 1 }], theme: "dark" });
+    assert.equal(store.get("kept"), "mine", "a visitor's own entry stays");
+    assert.equal(store.get("bag"), '[{"slug":"x","qty":1}]');
+    assert.equal(store.get("theme"), "dark");
+    // it goes into the page as its source: a plain function survives that
+    assert.match(seed.toString(), /^function seed\(st\)/);
+  } finally { delete globalThis.localStorage; }
 });
 
 test("serve: index, x → x.html, a folder's index, 404.html with 404", async () => {

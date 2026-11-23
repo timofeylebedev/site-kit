@@ -7,7 +7,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { measuredRules, roleAt } from "../checks/measured.mjs";
-import { measuredPages } from "../checks/measure.mjs";
+import { measuredPages, tagShot, merge } from "../checks/measure.mjs";
 import { joinState, codeRules } from "../checks/state.mjs";
 import { sourceRules } from "../checks/source.mjs";
 import { parseLine, applyAnswer } from "../checks/answer.mjs";
@@ -239,4 +239,22 @@ test("measuredPages: the home page always, then the pages marked measure (FM: th
   assert.deepEqual(measuredPages(fm, "http://x/", "?fmbox=0"), ["http://x/?fmbox=0"]);
   const qq = [{ path: "", main: true, measure: true }, { path: "catalog/", measure: true }, { path: "coffee/a/", measure: true }, { path: "faq/" }];
   assert.deepEqual(measuredPages(qq, "http://x/"), ["http://x/", "http://x/catalog/", "http://x/coffee/a/"]);
+});
+
+test("tagShot: a page other than the home page names itself in every place; the home page stays as it was", () => {
+  const shot = { vw: 390, vh: 844, dpr: 2, n: 3, contexts: 1, overflow: 0,
+    text: [{ px: 16, family: "A", weight: 400, lh: 1.4, object: false, n: 2, where: [".card__title", "p.lead"] }],
+    radii: [{ sel: ".card", px: 0, n: 1, where: [".card"] }], typo: [{ sel: "p.lead", lines: 2 }],
+    components: [{ name: "card", n: 4 }], edges: { lines: [], near: [{ sel: ".card", side: "left", x: 16, line: 16, d: 0 }], n: 1 } };
+  assert.equal(tagShot(shot, ""), shot, "the home page: the same object");
+  const t = tagShot(shot, "coffee/a/");
+  assert.deepEqual(t.text[0].where, ["coffee/a/ .card__title", "coffee/a/ p.lead"]);
+  assert.equal(t.radii[0].sel, "coffee/a/ .card");
+  assert.equal(t.typo[0].sel, "coffee/a/ p.lead");
+  assert.equal(t.edges.near[0].sel, "coffee/a/ .card");
+  assert.deepEqual(t.components, shot.components, "components are counted by name, over pages");
+  assert.deepEqual(shot.text[0].where, [".card__title", "p.lead"], "the snapshot itself is not changed");
+  // joined with the home page's snapshot: one text style, seen on both pages
+  const m = merge([{ ...shot, images: [], colours: [], fills: [], borders: [], shadows: [], effects: [], layers: [], z: [], icons: [], ratios: [], interact: [] }, { ...t, images: [], colours: [], fills: [], borders: [], shadows: [], effects: [], layers: [], z: [], icons: [], ratios: [], interact: [] }]);
+  assert.deepEqual(m.text[0].where, [".card__title", "p.lead", "coffee/a/ .card__title", "coffee/a/ p.lead"]);
 });

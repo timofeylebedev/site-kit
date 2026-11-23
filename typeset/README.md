@@ -93,7 +93,9 @@ Marks: `⍽` no-break space, `⁀` word joiner, `¦` a place a long link may bre
 | amount-currency | must | `5⍽млн⍽руб.`, `10⍽тыс.⍽₽` |
 | pointer | should | `см.⍽раздел`, `напр.⍽так` |
 | name-initials | should | `Поплавский⍽М.⍽К.` |
-| number-word | must / should | units, years, months: `10⍽км`, `27⍽июля`, `2006⍽г.` (must; one-letter units only with their dot: `в 2025 в Москве`, `5 с лишним`); what a number counts: `20⍽000⍽договоров` (should); never a capitalised word (`3 Политики`), a short word (`2026 и`) or after a label (`части⍽1 статьи`) |
+| number-of-number | must | `3⍽из⍽5`, `4⍽из⍽10`: one piece |
+| number-sign | must | a sign set apart from its number: `50⍽%`, `90⍽°`, `5⍽‰` |
+| number-word | must / should | units, years, months: `10⍽км`, `27⍽июля`, `2006⍽г.`, `200⍽г` (must; one-letter units only with their dot, `в 2025 в Москве`, `5 с лишним`, but for `г м л ч`, which are no word: `200⍽г`, `5⍽м`, `2⍽л`, `3⍽ч`); what a number counts: `20⍽000⍽договоров` (should); never a capitalised word (`3 Политики`), a short word (`2026 и`) or after a label (`части⍽1 статьи`) |
 | short-word | should | one- and two-letter words and `без для над под при про обо изо ото что как или меж ибо`: `в⍽доме`, `без⍽уточнений`, `а⍽не⍽в⍽последний`; not abbreviations in capitals (`РФ о`, `ПД (п. 1`), not particles, not the end of a hyphenated word (`кто-то из`); hyphenated prepositions count (`из-за⍽этого`) |
 
 Sources: А. Э. Мильчин, Л. К. Чельцова, «Справочник издателя и автора» (no-break spaces after prepositions and

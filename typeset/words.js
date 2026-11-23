@@ -20,6 +20,9 @@ export const RU = {
     января февраля марта апреля мая июня июля августа сентября октября ноября декабря
     январь февраль март апрель май июнь июль август сентябрь октябрь ноябрь декабрь
     янв фев мар апр июн июл авг сен сент окт ноя нояб дек`),
+  // one-letter units that are no Russian word, held to their number without a dot too: «200⍽г», «5⍽м», «2⍽л», «3⍽ч»
+  // («г» after a year reads as «год»: held as well, as «2025⍽г.» is)
+  bareUnits: set("г м л ч"),
   // these stay with the number AFTER them: «ст.⍽6», «п.⍽5», «глава⍽3», «параграфе⍽3»
   labels: set(`
     ст п пп ч гл рис табл с стр т вып кв д корп оф эт пр ул инн огрн огрнип кпп бик окпо

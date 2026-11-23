@@ -70,6 +70,15 @@ export function settings(cfg) {
   };
 }
 
+/** audit.storage into the browser, run in the page before its scripts: each entry only when it is not there yet (a
+ *  string as it is, anything else as JSON) */
+export function seed(st) {
+  for (const [k, v] of Object.entries(st)) if (localStorage.getItem(k) == null) localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v));
+}
+
+/** the exception that keeps a page where axe checks no text's contrast (audit.noContrast, a regex of the page's path) */
+export const noContrastFor = (exceptions, path) => exceptions.find((d) => d.audit?.noContrast && new RegExp(d.audit.noContrast).test(path || "")) || null;
+
 // the built site as GitHub Pages serves it: the kit's one server (lib/serve.mjs), also exported from here
 export { serve };
 
@@ -197,7 +206,7 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
         if (s.font && !chrome && !big) continue;            // WebKit: no way to set the text size
         const ctx = await (s.font && big ? big : browser).newContext({ viewport: { width: s.w, height: s.h }, hasTouch: !!s.touch, isMobile: !!s.touch && engine !== "firefox", bypassCSP: true });
         // what a visitor has put into this browser before (a bag, favourites): each key only when it is not there yet
-        if (S.storage) await ctx.addInitScript((st) => { for (const [k, v] of Object.entries(st)) if (localStorage.getItem(k) == null) localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v)); }, S.storage);
+        if (S.storage) await ctx.addInitScript(seed, S.storage);
         const page = await ctx.newPage();
         if (s.font && chrome) { const cdp = await ctx.newCDPSession(page); await cdp.send("Page.enable"); await cdp.send("Page.setFontSizes", { fontSizes: { standard: s.font, fixed: Math.round(s.font * 13 / 16) } }); }
         const errors = [];
@@ -237,7 +246,7 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
           if (!res.contrast) {
             // a page that opens with a modal over it (a dialog stands open from the start) may be kept as designed:
             // an exception with audit.noContrast, a regex of the page's path
-            const a = EXCEPTIONS.find((d) => d.audit?.noContrast && new RegExp(d.audit.noContrast).test(pg.path || ""));
+            const a = noContrastFor(EXCEPTIONS, pg.path);
             if (a) note(a.id, `${tag}: axe checked the contrast of no text`);
             else failures.push(`${tag}: axe could not check the contrast of any text (a layer it cannot see through?)`);
           }

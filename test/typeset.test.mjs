@@ -23,6 +23,17 @@ test("Russian: short words, chains, particles, dashes", () => check("ru", [
   ["слово - слово", "слово⍽- слово"],
 ]));
 
+test("Russian: a unit without a dot, «N из N», a sign apart (QQ's typograph held them)", () => check("ru", [
+  ["Пачка 200 г", "Пачка 200⍽г"],
+  ["от 250 г до 1 кг", "от⍽250⍽г⍽до⍽1⍽кг"],
+  ["Вес 1,5 кг, зёрна", "Вес 1,5⍽кг, зёрна"],
+  ["за 5 м и 2 л", "за⍽5⍽м⍽и⍽2⍽л"],                                     // a short word holds on, as «10⍽км⍽и» did
+  ["оценка 3 из 5 по шкале", "оценка 3⍽из⍽5 по⍽шкале"],
+  ["Глава из 3 частей", "Глава из⍽3⍽частей"],                                      // no number before: only the short word
+  ["скидка 50 % на всё", "скидка 50⍽% на⍽всё"],
+  ["5 в ряд, 5 с лишним", "5 в⍽ряд, 5 с⍽лишним"],                                 // «в», «с» are words: no unit
+]));
+
 test("Russian: numbers, labels, initials, abbreviations", () => check("ru", [
   ["в параграфе 3 Политики", "в⍽параграфе⍽3 Политики"],                   // the old one held «3⍽Политики»
   ["в пунктах 2-11 части 1 статьи 6", "в⍽пунктах 2-⁀11⍽части⍽1 статьи⍽6"],
