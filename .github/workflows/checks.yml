@@ -141,17 +141,41 @@ jobs:
           echo "measure: $measure ($why); shots: ${shots:-none}"
           { echo "measure=$measure"; echo "why=$why"; echo "shots=$shots"; } >> "$GITHUB_OUTPUT"
 
-      - name: Browsers
+      - name: Which browsers
+        id: pw
         if: steps.decide.outputs.measure == 'true' || steps.decide.outputs.shots != ''
         env:
           ENGINES: ${{ inputs.engines }}
           SHOTS: ${{ steps.decide.outputs.shots }}
+          MEASURE: ${{ steps.decide.outputs.measure }}
         run: |
           list=""
-          if [ "${{ steps.decide.outputs.measure }}" = true ]; then for e in $ENGINES; do list="$list ${e%%:*}"; done; fi
+          if [ "$MEASURE" = true ]; then for e in $ENGINES; do list="$list ${e%%:*}"; done; fi
           if [ -n "$SHOTS" ]; then list="$list chromium"; fi
-          # shellcheck disable=SC2046,SC2086  # the list is split on purpose
-          npx --no-install playwright install --with-deps $(echo $list | tr ' ' '\n' | sort -u | tr '\n' ' ')
+          list=$(echo $list | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+          version=$(node -p "require('playwright/package.json').version")
+          { echo "list=$list"; echo "key=browsers-$(lsb_release -rs)-$version-${list// /-}"; } >> "$GITHUB_OUTPUT"
+          # apt keeps the system libraries it downloads in a folder the cache below saves: a slow Ubuntu mirror once took
+          # 9 of the job's 20 minutes on them (126 MB at 229 kB/s); the browsers themselves came in 8 seconds
+          mkdir -p "$HOME/.cache/apt-archives/partial"
+          printf 'Dir::Cache::Archives "%s/";\nAPT::Keep-Downloaded-Packages "true";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\n' "$HOME/.cache/apt-archives" | sudo tee /etc/apt/apt.conf.d/99site-kit-cache > /dev/null
+      - name: Browsers from the cache
+        if: steps.pw.outputs.list != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/apt-archives/*.deb
+          key: ${{ steps.pw.outputs.key }}
+      - name: Browsers
+        if: steps.pw.outputs.list != ''
+        env:
+          LIST: ${{ steps.pw.outputs.list }}
+        run: |
+          # with the cache: no browser download, and apt installs from the saved packages (only its index is fetched)
+          # shellcheck disable=SC2086  # the list is split on purpose
+          npx --no-install playwright install --with-deps $LIST
+          sudo chmod -R a+rX "$HOME/.cache/apt-archives"
       - if: (steps.decide.outputs.measure == 'true' || steps.decide.outputs.shots != '') && inputs.before-build != ''
         run: ${{ inputs.before-build }}
       - name: Build

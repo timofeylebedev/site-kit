@@ -76,6 +76,16 @@ export function seed(st) {
   for (const [k, v] of Object.entries(st)) if (localStorage.getItem(k) == null) localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v));
 }
 
+/** Waits until every running transition and finite animation on the page has ended (at most `ms`), so what is measured
+ *  next is the settled look. An endless animation (a loop, a spinner) is not waited for. */
+export async function settle(page, ms = 2000) {
+  await page.evaluate(async (ms) => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));   // a change the last scroll set off has started
+    const finite = document.getAnimations().filter((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming?.().endTime));
+    await Promise.race([Promise.all(finite.map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, ms))]);
+  }, ms);
+}
+
 /** the exception that keeps a page where axe checks no text's contrast (audit.noContrast, a regex of the page's path) */
 export const noContrastFor = (exceptions, path) => exceptions.find((d) => d.audit?.noContrast && new RegExp(d.audit.noContrast).test(path || "")) || null;
 
@@ -241,6 +251,9 @@ export async function audit(cfg, { engine = "chromium", log = console.log } = {}
           await page.evaluate(() => scrollTo(0, 0));
           // a decoration axe cannot see through (a layer outside the page) may be hidden for the check (audit.axeStyle)
           if (S.axeStyle) await page.addStyleTag({ content: S.axeStyle });
+          // colours that glide (a bar taking the colours of the section under it, a hover fading out) are judged as they
+          // settle, not half-way: a tab bar following the grounds was read mid-crossing and looked too faint (Nov 2026)
+          await settle(page);
           await page.addScriptTag({ content: AXE });
           const res = await page.evaluate(async () => { const r = await axe.run(document, { resultTypes: ["violations"] }); return { v: r.violations.map((x) => ({ id: x.id, nodes: x.nodes.map((n) => n.target.join(" ")) })), contrast: r.passes.some((x) => x.id === "color-contrast") || r.violations.some((x) => x.id === "color-contrast") }; });
           if (!res.contrast) {
