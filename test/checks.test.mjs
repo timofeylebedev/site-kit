@@ -7,6 +7,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { measuredRules, roleAt } from "../checks/measured.mjs";
+import { measuredPages } from "../checks/measure.mjs";
 import { joinState, codeRules } from "../checks/state.mjs";
 import { sourceRules } from "../checks/source.mjs";
 import { parseLine, applyAnswer } from "../checks/answer.mjs";
@@ -231,4 +232,11 @@ test("the lessons' ids (rules/ids.mjs) are the rules learningRules returns, in o
   assert.equal(bad.length, LESSONS.length);
   assert.ok(bad.some((r) => r.error));
   assert.ok(bad.filter((r) => r.error).every((r) => LESSONS.some((l) => l.id === r.id) && r.fails.length === 0));
+});
+
+test("measuredPages: the home page always, then the pages marked measure (FM: the home page alone)", () => {
+  const fm = [{ path: "", main: true }, { path: "privacy_policy_ru" }, { path: "no-such-page", status: 404 }];
+  assert.deepEqual(measuredPages(fm, "http://x/", "?fmbox=0"), ["http://x/?fmbox=0"]);
+  const qq = [{ path: "", main: true, measure: true }, { path: "catalog/", measure: true }, { path: "coffee/a/", measure: true }, { path: "faq/" }];
+  assert.deepEqual(measuredPages(qq, "http://x/"), ["http://x/", "http://x/catalog/", "http://x/coffee/a/"]);
 });

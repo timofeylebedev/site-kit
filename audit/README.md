@@ -49,10 +49,22 @@ it is measured and printed under "Kept as designed" on every run, so it stays in
 | `axeStyle` | CSS added before axe runs (a decoration outside the page that hides every background from axe) | none |
 | `query` | added to every page's address (`?box=0`, say) | none |
 | `launchArgs` | Chromium's flags | the SwiftShader pair |
+| `texts` | what counts as a text for «text cut off» | `h1, h2, h3, p, a, button, dt, dd, span` |
+| `targets` | what counts as a target | `a[href], button` |
+| `textBox` | the box of a text: `"content"` (the element's whole content) or `"nodes"` (its own text's boxes: text under `unseen` and text ending in an ellipsis left out, a `<select>`'s own box, and a line-clamped block cuts on purpose) | `"content"` |
+| `unseen` | text for screen readers only (`.sr`): left out of «text cut off» (with `textBox: "nodes"`) and of «text under 12px» | none |
+| `stretched` | a link whose `::after` is positioned: `"grow"` counts the hit area it grows past the box, `"skip"` leaves the link out (a whole card that is its link) | `"grow"` |
+| `storage` | `{ key: value }` put into `localStorage` before every page, each key only when it is not there yet (a bag, favourites: what a visitor has put in); a value that is not a string is written as JSON | none |
+| `probe` | the site's own checks, an arrow function run in the page after the sections (where they left it): `() => ["navbar: …", …]`, each string a failure | none |
+| `canvases` | the canvases whose texts are measured from pixels; `null`: none (a site whose canvas draws objects, not grounds) | `canvas` |
 
 The nine sizes: 320×568 (axe), 390×844, 768×1024, 844×390, 1024×768 (phones and tablets, touch), 1366×650,
 1920×1080 (axe), and 390×844 and 1366×650 with 24px text. With more than one page, each line of the output starts with
 the page's path.
+
+QQ Coffee's adapter (v0.1.1) keeps its own audit's findings: 21 pages at twelve sizes (2560 and a folded phone
+among them, axe also at the 24px text), its own text boxes, a bag and favourites in the browser, the navbar and the
+countdown as `probe`, the page looked at once at the top (`sections: ["body"]`), no canvas text.
 
 Flow Medium's adapter keeps today's audit exactly: the home page only, its drawings, chips, logo strip, ID cards, card
 stack, navbar and menu left out of «cut off», `.skip` out of the targets, the stack left out of the sections, and its

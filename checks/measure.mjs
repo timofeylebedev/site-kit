@@ -6,7 +6,7 @@
 //   sweep      every 10px of width (320–1920, 1100 tall) and every 25px of height (400–1100, 1440 wide): the probes of
 //              the adapter (checks.probes: the report's responsive picture and map)
 //   sizes      at each size of checks.sizes: the collector (collect.js) on the whole page, reduced motion, after a
-//              scroll top to bottom (so every block has come in)
+//              scroll top to bottom (so every block has come in); the home page and the pages marked `measure: true`
 //   modes      at 390×844 and 1440×900: no scripts, no WebGL, forced colours, fonts that never arrive, reduced motion
 //   privacy    a first visit: requests to other hosts, cookies and storage before consent, and after (a site with no
 //              consent: the hosts it calls, no split)
@@ -36,6 +36,9 @@ export const consentVersion = (cfg, io) => {
   if (!c) return null;
   return typeof c.version === "function" ? c.version(io) : c.version ?? 1;
 };
+
+/** the addresses measured at the full sizes: the home page, then every page marked `measure: true` (README.md) */
+export const measuredPages = (pages = [], base, q = "") => [base + q, ...pages.filter((p) => p.measure && !p.main && p.path).map((p) => base + p.path + q)];
 
 export async function measure(cfg, args = []) {
   const io = siteIO(cfg), opt = options(args, ["engine", "only", "out"]), C = { ...DEFAULTS, ...cfg.checks };
@@ -129,22 +132,30 @@ export async function measure(cfg, args = []) {
     });
 
     // ── sizes ──
+    // the home page, and every page of checks.pages marked `measure: true` (a site whose system lives on more pages
+    // than its home: a catalog, a product page); their snapshots are joined into one record per size
+    const MEASURED = measuredPages(C.pages, URL0, Q);
     await step("sizes", async () => {
       for (const s of C.sizes) {
-        const ctx = await context(browser, s), page = await ctx.newPage(), errors = [];
-        await offline(ctx); page.on("pageerror", (e) => errors.push(String(e.message || e).slice(0, 200)));
-        await page.emulateMedia({ reducedMotion: "reduce" });
-        await page.goto(PAGE, { waitUntil: "load" }); await wait(page, 900); await warm(page);
-        await withCollector(page);
-        // what shows only in view (cards that come in, pinned blocks) is measured where it shows: at the top of every
-        // section, and a screen at a time through the ones taller than the screen; the snapshots are joined
-        const stops = await page.evaluate(([h, sel]) => { const ys = new Set([0]); for (const e of document.querySelectorAll(sel)) { const r = e.getBoundingClientRect(), top = r.top + scrollY; ys.add(Math.max(0, Math.round(top - 80))); for (let y = top + h; y < top + r.height - h / 2; y += h) ys.add(Math.round(y)); } return [...ys].sort((a, b) => a - b); }, [s.h, C.sections]);
-        const shots = [];
-        for (const y of stops) { await page.evaluate((y) => scrollTo(0, y), y); await wait(page, 450); shots.push(await page.evaluate(async (c) => await window.__dsCollect(c), collectCfg)); }
+        const shots = [], errors = [];
+        let n = 0;
+        for (const address of MEASURED) {
+          const ctx = await context(browser, s), page = await ctx.newPage();
+          await offline(ctx); page.on("pageerror", (e) => errors.push(String(e.message || e).slice(0, 200)));
+          await page.emulateMedia({ reducedMotion: "reduce" });
+          await page.goto(address, { waitUntil: "load" }); await wait(page, 900); await warm(page);
+          await withCollector(page);
+          // what shows only in view (cards that come in, pinned blocks) is measured where it shows: at the top of every
+          // section, and a screen at a time through the ones taller than the screen; the snapshots are joined
+          const stops = await page.evaluate(([h, sel]) => { const ys = new Set([0]); for (const e of document.querySelectorAll(sel)) { const r = e.getBoundingClientRect(), top = r.top + scrollY; ys.add(Math.max(0, Math.round(top - 80))); for (let y = top + h; y < top + r.height - h / 2; y += h) ys.add(Math.round(y)); } return [...ys].sort((a, b) => a - b); }, [s.h, C.sections]);
+          for (const y of stops) { await page.evaluate((y) => scrollTo(0, y), y); await wait(page, 450); shots.push(await page.evaluate(async (c) => await window.__dsCollect(c), collectCfg)); }
+          n += stops.length;
+          await ctx.close();
+        }
         const m = merge(shots);
-        m.errors = errors; m.stops = stops.length;
+        m.errors = errors; m.stops = n;
+        if (MEASURED.length > 1) m.pages = MEASURED.length;
         record.at[`${s.w}x${s.h}`] = m;
-        await ctx.close();
       }
     });
 
